@@ -1,8 +1,10 @@
 {
   "version": "1.0.0",
-  "changelog": "## Lucky v1.0.0",
+  "changelog": "# Lucky v1.0.0\n\nTo celebrate the 5th anniversary of the Hawkeye series and the first appearance of Lucky, the pizza dog, I'm bringing Lucky to you!\n\nNgl guys, I rushed this. It's still so unfinished, but yeah, I had to release it because this day is really special to me. Don't worry, there's a lot more to come for this project. I mean, I have full control over my own engine, so there's still plenty of room for improvement.\n\nSo yeah, don't expect it to be perfect or get mad at me. I literally rushed this release.",
   "downloads": {
-    "universal": "https://github.com/jhaiian/Lucky/releases/download/v1.0.0/Lucky-1.0.0-universal.apk"
+    "universal": "https://github.com/jhaiian/Lucky/releases/download/v1.0.0/Lucky-1.0.0-universal.apk",
+    "arm64-v8a": "https://github.com/jhaiian/Lucky/releases/download/v1.0.0/Lucky-1.0.0-arm64-v8a.apk",
+    "armeabi-v7a": "https://github.com/jhaiian/Lucky/releases/download/v1.0.0/Lucky-1.0.0-armeabi-v7a.apk"
   },
   "versionCode": 1
 }
