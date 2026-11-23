@@ -1,0 +1,13 @@
+[package]
+name = "lucky-android"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+lucky-ffmpeg.workspace = true
+lucky-player.workspace = true
+libc.workspace = true
+log.workspace = true

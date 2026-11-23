@@ -1,0 +1,12 @@
+.gradle/
+build/
+.cxx/
+.ccache/
+local.properties
+*.jks
+engine/target/
+engine/native/out/
+engine/native/.work/
+engine/native/.cache/
+buildSrc/build/
+buildSrc/.gradle/

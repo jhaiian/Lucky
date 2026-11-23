@@ -1,0 +1,34 @@
+Lucky is an open-source video player for the videos already on your phone. No accounts, no streaming, no ads. It runs on its own engine, built in Rust on top of FFmpeg and dav1d, so it plays almost any format on any phone.
+
+<b>Picture</b>
+• Over 20 scaling filters, from Bilinear to Lanczos and EWA Lanczos, drawn with Vulkan or OpenGL ES
+• Real HDR10, HLG, and Dolby Vision on HDR screens, with scene-by-scene tone mapping on the rest
+• Wide color, deinterlacing, and automatic quality that eases off when your GPU can't keep up
+• Hardware or software decoding, with fast AV1 through dav1d
+
+<b>Smooth motion</b>
+• Frame blending that takes the stutter out of slow pans
+• Motion interpolation with real in-between frames, plus an anime mode
+• Switches your screen to a refresh rate that fits the video
+
+<b>Sound</b>
+• Plays DTS, Dolby, FLAC, and Opus on any phone
+• Surround up to 7.1 and passthrough to your receiver or TV
+• Equalizer, night mode, dialogue boost, and volume normalization
+
+<b>Subtitles</b>
+• libass rendering for styled ASS and SSA subtitles
+• Load subtitle files and change the delay, size, color, and style
+
+<b>Player</b>
+• Swipe for brightness, volume, and seeking, double-tap to skip, pinch to zoom, and hold to speed up
+• Picture-in-picture, chapters, A–B repeat, a sleep timer, and frame-by-frame stepping
+• Remove black bars, crop, zoom, mirror, or rotate the video, and take screenshots
+
+<b>Library and looks</b>
+• Finds your videos by itself, or only looks in the folders you pick
+• Continue watching, recently added, folders, history, and search
+• Light and dark themes, accent colors, and Material You
+• Adaptive layout for phones, tablets, foldables, and wide screens
+
+Lucky needs Android 8.0 or newer.

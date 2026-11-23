@@ -1,0 +1,16 @@
+[package]
+name = "lucky-ffmpeg-sys"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+links = "lucky_ffmpeg"
+build = "build.rs"
+
+[dependencies]
+libc.workspace = true
+
+[build-dependencies]
+bindgen.workspace = true
+cc.workspace = true

@@ -1,0 +1,19 @@
+--- a/libass/ass_fontselect.c
++++ b/libass/ass_fontselect.c
+@@ -919,6 +919,16 @@
+         }
+     }
+ 
++    if (!res && (code || !priv->path_default)) {
++        for (int x = 0; x < priv->n_font && !res; x++) {
++            ASS_FontInfo *candidate = &priv->font_infos[x];
++            if (candidate->n_family < 1 || (code && !check_glyph(candidate, code)))
++                continue;
++            res = select_font(priv, candidate->families[0], false, bold,
++                    italic, index, postscript_name, uid, data, code);
++        }
++    }
++
+     if (!res && priv->path_default) {
+         res = priv->path_default;
+         *index = priv->index_default;

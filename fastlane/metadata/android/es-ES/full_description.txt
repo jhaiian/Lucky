@@ -1,0 +1,34 @@
+Lucky es un reproductor de video de código abierto para los videos que ya tienes en tu teléfono. Sin cuentas, sin streaming y sin anuncios. Funciona con su propio motor, hecho en Rust sobre FFmpeg y dav1d, así que reproduce casi cualquier formato en cualquier teléfono.
+
+<b>Imagen</b>
+• Más de 20 filtros de escalado, de Bilinear a Lanczos y EWA Lanczos, dibujados con Vulkan u OpenGL ES
+• HDR10, HLG y Dolby Vision reales en pantallas HDR, con mapeo de tonos escena por escena en las demás
+• Color amplio, desentrelazado y calidad automática que se ajusta cuando la GPU no da abasto
+• Decodificación por hardware o software, con AV1 rápido gracias a dav1d
+
+<b>Movimiento fluido</b>
+• Mezcla de fotogramas que elimina los tirones en los paneos lentos
+• Interpolación de movimiento con fotogramas intermedios reales, además de un modo anime
+• Ajusta la frecuencia de la pantalla a la del video
+
+<b>Sonido</b>
+• Reproduce DTS, Dolby, FLAC y Opus en cualquier teléfono
+• Sonido envolvente hasta 7.1 y passthrough a tu receptor o TV
+• Ecualizador, modo nocturno, realce de diálogos y normalización de volumen
+
+<b>Subtítulos</b>
+• Renderizado con libass para subtítulos ASS y SSA con estilo
+• Carga archivos de subtítulos y cambia el retraso, el tamaño, el color y el estilo
+
+<b>Reproductor</b>
+• Desliza para el brillo, el volumen y avanzar, toca dos veces para saltar, pellizca para hacer zoom y mantén presionado para acelerar
+• Imagen en imagen, capítulos, repetición A–B, temporizador y avance cuadro por cuadro
+• Quita las barras negras, recorta, haz zoom, refleja o gira el video, y toma capturas
+
+<b>Biblioteca y apariencia</b>
+• Encuentra tus videos por sí solo o busca solo en las carpetas que elijas
+• Seguir viendo, agregados recientemente, carpetas, historial y búsqueda
+• Temas claro y oscuro, colores de acento y Material You
+• Diseño adaptable para teléfonos, tablets, plegables y pantallas anchas
+
+Lucky necesita Android 8.0 o posterior.

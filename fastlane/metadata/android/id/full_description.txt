@@ -1,0 +1,34 @@
+Lucky adalah pemutar video open source untuk video yang sudah ada di ponsel Anda. Tanpa akun, tanpa streaming, tanpa iklan. Lucky berjalan di mesinnya sendiri yang dibuat dengan Rust di atas FFmpeg dan dav1d, jadi hampir semua format bisa diputar di ponsel apa pun.
+
+<b>Gambar</b>
+• Lebih dari 20 filter skala, dari Bilinear hingga Lanczos dan EWA Lanczos, digambar dengan Vulkan atau OpenGL ES
+• HDR10, HLG, dan Dolby Vision sungguhan di layar HDR, dengan tone mapping per adegan di layar lainnya
+• Warna luas, deinterlacing, dan kualitas otomatis yang menyesuaikan saat GPU tidak sanggup
+• Decoding hardware atau software, dengan AV1 cepat lewat dav1d
+
+<b>Gerakan halus</b>
+• Frame blending yang menghilangkan patah-patah saat kamera bergerak pelan
+• Interpolasi gerakan dengan frame sisipan sungguhan, plus mode anime
+• Menyesuaikan refresh rate layar dengan video
+
+<b>Suara</b>
+• Memutar DTS, Dolby, FLAC, dan Opus di ponsel apa pun
+• Surround hingga 7.1 dan passthrough ke receiver atau TV
+• Equalizer, mode malam, penguat dialog, dan normalisasi volume
+
+<b>Subtitle</b>
+• Rendering libass untuk subtitle ASS dan SSA bergaya
+• Muat file subtitle lalu ubah jeda, ukuran, warna, dan gayanya
+
+<b>Pemutar</b>
+• Geser untuk kecerahan, volume, dan seek, ketuk dua kali untuk melompat, cubit untuk zoom, dan tahan untuk mempercepat
+• Picture-in-picture, chapter, pengulangan A–B, timer tidur, dan maju per frame
+• Hapus bilah hitam, potong, zoom, cerminkan, atau putar video, dan ambil screenshot
+
+<b>Pustaka dan tampilan</b>
+• Menemukan video Anda secara otomatis, atau hanya mencari di folder pilihan Anda
+• Lanjutkan menonton, baru ditambahkan, folder, riwayat, dan pencarian
+• Tema terang dan gelap, warna aksen, dan Material You
+• Tata letak adaptif untuk ponsel, tablet, perangkat lipat, dan layar lebar
+
+Lucky memerlukan Android 8.0 atau yang lebih baru.

@@ -1,0 +1,34 @@
+O Lucky é um player de vídeo de código aberto para os vídeos que já estão no seu celular. Sem contas, sem streaming e sem anúncios. Ele roda no próprio motor, feito em Rust sobre FFmpeg e dav1d, então toca quase qualquer formato em qualquer celular.
+
+<b>Imagem</b>
+• Mais de 20 filtros de escala, do Bilinear ao Lanczos e EWA Lanczos, desenhados com Vulkan ou OpenGL ES
+• HDR10, HLG e Dolby Vision de verdade em telas HDR, com mapeamento de tons cena a cena nas demais
+• Cores amplas, desentrelaçamento e qualidade automática que alivia quando a GPU não dá conta
+• Decodificação por hardware ou software, com AV1 rápido via dav1d
+
+<b>Movimento suave</b>
+• Mistura de quadros que acaba com os engasgos em panorâmicas lentas
+• Interpolação de movimento com quadros intermediários de verdade, além de um modo anime
+• Ajusta a taxa de atualização da tela ao vídeo
+
+<b>Som</b>
+• Toca DTS, Dolby, FLAC e Opus em qualquer celular
+• Surround até 7.1 e passthrough para o seu receiver ou TV
+• Equalizador, modo noturno, realce de diálogos e normalização de volume
+
+<b>Legendas</b>
+• Renderização com libass para legendas ASS e SSA estilizadas
+• Carregue arquivos de legenda e mude o atraso, o tamanho, a cor e o estilo
+
+<b>Player</b>
+• Deslize para brilho, volume e avanço, toque duas vezes para pular, faça pinça para dar zoom e segure para acelerar
+• Picture-in-picture, capítulos, repetição A–B, timer e avanço quadro a quadro
+• Remova as barras pretas, recorte, dê zoom, espelhe ou gire o vídeo, e tire capturas de tela
+
+<b>Biblioteca e visual</b>
+• Encontra seus vídeos sozinho ou procura só nas pastas que você escolher
+• Continuar assistindo, adicionados recentemente, pastas, histórico e busca
+• Temas claro e escuro, cores de destaque e Material You
+• Layout adaptável para celulares, tablets, dobráveis e telas largas
+
+O Lucky precisa do Android 8.0 ou mais recente.

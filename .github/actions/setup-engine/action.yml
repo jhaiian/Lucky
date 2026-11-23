@@ -1,0 +1,69 @@
+name: Set up Lucky engine toolchain
+description: Installs Rust, cargo-ndk, the pinned Android NDK and restores cached native dependencies.
+
+inputs:
+  abis:
+    description: Space separated Android ABIs to prepare
+    required: false
+    default: arm64-v8a armeabi-v7a
+
+runs:
+  using: composite
+  steps:
+    - name: Read engine versions
+      id: versions
+      shell: bash
+      run: |
+        NDK_VERSION=$(grep -oP '(?<=luckyNdkVersion = ")[^"]+' app/build.gradle.kts)
+        echo "ndk=$NDK_VERSION" >> "$GITHUB_OUTPUT"
+        echo "abis_key=$(echo '${{ inputs.abis }}' | tr ' ' '-')" >> "$GITHUB_OUTPUT"
+        TARGETS=""
+        for abi in ${{ inputs.abis }}; do
+          case "$abi" in
+            arm64-v8a) TARGETS="$TARGETS aarch64-linux-android" ;;
+            armeabi-v7a) TARGETS="$TARGETS armv7-linux-androideabi" ;;
+          esac
+        done
+        echo "targets=$TARGETS" >> "$GITHUB_OUTPUT"
+
+    - name: Install Rust toolchain
+      shell: bash
+      run: |
+        rustup toolchain install stable --profile minimal --no-self-update
+        rustup default stable
+        rustup target add ${{ steps.versions.outputs.targets }}
+
+    - name: Cache Cargo
+      uses: actions/cache@v5
+      with:
+        path: |
+          ~/.cargo/bin/cargo-ndk
+          ~/.cargo/registry/index
+          ~/.cargo/registry/cache
+          ~/.cargo/git/db
+        key: cargo-${{ runner.os }}-${{ hashFiles('engine/Cargo.lock') }}
+        restore-keys: cargo-${{ runner.os }}-
+
+    - name: Install cargo-ndk
+      shell: bash
+      run: cargo ndk --version > /dev/null 2>&1 || cargo install cargo-ndk --locked
+
+    - name: Install Android NDK and native build tools
+      shell: bash
+      run: |
+        SDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+        echo "y" | "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --install "ndk;${{ steps.versions.outputs.ndk }}" > /dev/null
+        echo "ANDROID_NDK_HOME=$SDK_ROOT/ndk/${{ steps.versions.outputs.ndk }}" >> "$GITHUB_ENV"
+        echo "ANDROID_NDK_ROOT=$SDK_ROOT/ndk/${{ steps.versions.outputs.ndk }}" >> "$GITHUB_ENV"
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq meson ninja-build pkg-config > /dev/null
+
+    - name: Cache native dependencies
+      uses: actions/cache@v5
+      with:
+        path: engine/native/out
+        key: native-deps-${{ hashFiles('engine/native/versions.env', 'engine/native/build-deps.sh', 'engine/native/patches/**') }}-ndk${{ steps.versions.outputs.ndk }}-${{ steps.versions.outputs.abis_key }}
+
+    - name: Build native dependencies
+      shell: bash
+      run: bash engine/native/build-deps.sh ${{ inputs.abis }}

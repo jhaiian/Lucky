@@ -1,0 +1,14 @@
+[package]
+name = "lucky-ffmpeg"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+lucky-ffmpeg-sys.workspace = true
+libc.workspace = true
+log.workspace = true
+serde.workspace = true
+thiserror.workspace = true

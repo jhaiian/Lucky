@@ -1,0 +1,2 @@
+-keep class com.jhaiian.lucky.** { *; }
+-keepattributes SourceFile,LineNumberTable

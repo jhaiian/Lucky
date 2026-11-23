@@ -1,0 +1,34 @@
+Ang Lucky ay open-source na video player para sa mga video na nasa phone mo na. Walang account, walang streaming, walang ads. Tumatakbo ito sa sarili nitong engine na gawa sa Rust, gamit ang FFmpeg at dav1d, kaya halos lahat ng format ay napapanood sa kahit anong phone.
+
+<b>Picture</b>
+• Mahigit 20 scaling filter, mula Bilinear hanggang Lanczos at EWA Lanczos, gamit ang Vulkan o OpenGL ES
+• Totoong HDR10, HLG at Dolby Vision sa mga HDR na screen, at scene-by-scene tone mapping sa iba
+• Wide color, deinterlacing, at automatic quality na nagpapagaan kapag hindi na kaya ng GPU
+• Hardware o software decoding, at mabilis na AV1 gamit ang dav1d
+
+<b>Smooth na galaw</b>
+• Frame blending para wala nang patalon-talon kapag mabagal ang galaw ng camera
+• Motion interpolation na gumagawa ng totoong in-between frame, at may anime mode pa
+• Itinutugma ang refresh rate ng screen mo sa video
+
+<b>Tunog</b>
+• Napapatugtog ang DTS, Dolby, FLAC at Opus sa kahit anong phone
+• Surround hanggang 7.1 at passthrough papunta sa receiver o TV mo
+• Equalizer, night mode, dialogue boost at volume normalization
+
+<b>Subtitle</b>
+• libass rendering para sa mga ASS at SSA subtitle na may style
+• Mag-load ng subtitle file at baguhin ang delay, laki, kulay at style
+
+<b>Player</b>
+• Mag-swipe para sa brightness, volume at seek, mag-double tap para lumaktaw, mag-pinch para mag-zoom, at pindutin nang matagal para bumilis
+• Picture-in-picture, chapters, A–B repeat, sleep timer at frame-by-frame
+• Tanggalin ang black bars, i-crop, i-zoom, i-mirror o i-rotate ang video, at mag-screenshot
+
+<b>Library at itsura</b>
+• Kusang hinahanap ang mga video mo, o sa mga folder lang na pipiliin mo
+• Continue watching, recently added, folders, history at search
+• Light at dark na tema, accent color at Material You
+• Adaptive layout para sa phone, tablet, foldable at malalapad na screen
+
+Kailangan ng Lucky ang Android 8.0 o mas bago.
