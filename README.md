@@ -193,4 +193,3 @@ The source code of this project is licensed under the [GNU General Public Licens
 The name "Lucky," the logo, screenshots, and all related branding assets are **trademarks** or **proprietary assets** of the author and are **not licensed under the GPL**. Using them requires explicit permission from the author.
 
 The libraries used in Lucky keep their own licenses, including FFmpeg (LGPL-2.1-or-later), dav1d (BSD-2-Clause), jni-rs, ash and glow (MIT / Apache-2.0), and Jetpack Compose (Apache-2.0). The full list is in the app under Settings → About.
-# Lucky
