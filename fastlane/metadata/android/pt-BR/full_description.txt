@@ -23,11 +23,13 @@ O Lucky é um player de vídeo de código aberto para os vídeos que já estão 
 <b>Player</b>
 • Deslize para brilho, volume e avanço, toque duas vezes para pular, faça pinça para dar zoom e segure para acelerar
 • Picture-in-picture, capítulos, repetição A–B, timer e avanço quadro a quadro
+• Reprodução em segundo plano com miniplayer, modo Só áudio, aumento de volume até 300% e botões para pular abertura e créditos
 • Remova as barras pretas, recorte, dê zoom, espelhe ou gire o vídeo, e tire capturas de tela
 
 <b>Biblioteca e visual</b>
 • Encontra seus vídeos sozinho ou procura só nas pastas que você escolher
 • Continuar assistindo, adicionados recentemente, pastas, histórico e busca
+• Abra vídeos de outros apps e toque e segure qualquer vídeo para compartilhar, renomear, excluir ou ver os detalhes
 • Temas claro e escuro, cores de destaque e Material You
 • Layout adaptável para celulares, tablets, dobráveis e telas largas
 

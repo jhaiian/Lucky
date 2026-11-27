@@ -1,0 +1,8 @@
+• Play in the background, with a mini-player
+• Open videos from other apps with Lucky
+• Long-press a video to share, rename, delete, or see its details
+• New player look, with a live preview page
+• Volume boost up to 300% and an Audio only mode
+• Skip intro, recap, and credits buttons
+• Episodes of a show remember your audio, subtitles, and zoom
+• Smoother, cleaner motion interpolation

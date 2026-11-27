@@ -76,7 +76,7 @@ Lucky draws every frame itself, so you decide how your videos look.
 - **Frame blending** in Sharp or Smooth modes takes the stutter out of slow pans on 60 Hz and 90 Hz screens.
 - **Motion interpolation** creates real in-between frames by tracking motion in the video. Pick a quality and a target frame rate, or let Lucky measure your phone and choose.
 - **Anime mode** skips repeated drawings so animation flows between the real ones.
-- **Artifact protection and scene-cut detection** keep halos and morphing shots away.
+- **Automatic artifact masking and scene-cut detection** keep objects in one piece and stop different shots from morphing into each other, with nothing to tune.
 - **Match screen speed** switches your screen to a refresh rate that fits the video.
 - **Battery and heat aware.** It can turn off in battery saver and ease off when your phone gets hot.
 
@@ -192,4 +192,4 @@ The source code of this project is licensed under the [GNU General Public Licens
 
 The name "Lucky," the logo, screenshots, and all related branding assets are **trademarks** or **proprietary assets** of the author and are **not licensed under the GPL**. Using them requires explicit permission from the author.
 
-The libraries used in Lucky keep their own licenses, including FFmpeg (LGPL-2.1-or-later), dav1d (BSD-2-Clause), jni-rs, ash and glow (MIT / Apache-2.0), and Jetpack Compose (Apache-2.0). The full list is in the app under Settings → About.
+The libraries used in Lucky keep their own licenses. See [Attribution.md](Attribution.md) for the full list.

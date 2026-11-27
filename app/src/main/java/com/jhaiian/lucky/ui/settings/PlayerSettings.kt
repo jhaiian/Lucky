@@ -4,106 +4,113 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.view.accessibility.CaptioningManager
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.PlaylistPlay
+import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.AspectRatio
+import androidx.compose.material.icons.rounded.Audiotrack
 import androidx.compose.material.icons.rounded.AutoAwesomeMotion
-import androidx.compose.material.icons.rounded.ColorLens
-import androidx.compose.material.icons.rounded.LinearScale
-import androidx.compose.material.icons.rounded.Loop
-import androidx.compose.material.icons.rounded.Palette
-import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Bookmarks
+import androidx.compose.material.icons.rounded.BorderStyle
 import androidx.compose.material.icons.rounded.Brightness6
 import androidx.compose.material.icons.rounded.ClosedCaption
 import androidx.compose.material.icons.rounded.FastForward
+import androidx.compose.material.icons.rounded.Flip
 import androidx.compose.material.icons.rounded.FormatBold
 import androidx.compose.material.icons.rounded.FormatColorText
+import androidx.compose.material.icons.rounded.Forward10
+import androidx.compose.material.icons.rounded.Headphones
+import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material.icons.rounded.KeyboardArrowUp
 import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material.icons.rounded.Loop
+import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.PhotoCamera
 import androidx.compose.material.icons.rounded.PictureInPictureAlt
-import androidx.compose.material.icons.rounded.ZoomIn
-import androidx.compose.material.icons.automirrored.rounded.PlaylistPlay
 import androidx.compose.material.icons.rounded.Repeat
-import androidx.compose.material.icons.rounded.ScreenRotation
 import androidx.compose.material.icons.rounded.Schedule
+import androidx.compose.material.icons.rounded.ScreenRotation
 import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.Subtitles
 import androidx.compose.material.icons.rounded.SwapHoriz
 import androidx.compose.material.icons.rounded.SwipeLeft
 import androidx.compose.material.icons.rounded.Timer
-import androidx.compose.material.icons.rounded.TouchApp
-import androidx.compose.material.icons.rounded.Flip
-import androidx.compose.material.icons.rounded.Forward10
 import androidx.compose.material.icons.rounded.TimerOff
-import androidx.compose.material.icons.automirrored.rounded.VolumeUp
-import androidx.compose.material.icons.rounded.BorderStyle
+import androidx.compose.material.icons.rounded.TouchApp
+import androidx.compose.material.icons.rounded.ZoomIn
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import com.jhaiian.lucky.R
 import com.jhaiian.lucky.data.LuckyPrefs
 import com.jhaiian.lucky.engine.FitMode
 import com.jhaiian.lucky.ui.components.ChoiceRow
 import com.jhaiian.lucky.ui.components.ChoiceTiles
+import com.jhaiian.lucky.ui.components.IconTileIcon
+import com.jhaiian.lucky.ui.components.LuckySwitch
 import com.jhaiian.lucky.ui.components.RowDivider
 import com.jhaiian.lucky.ui.components.SettingsRow
 import com.jhaiian.lucky.ui.components.SettingsSwitchRow
 import com.jhaiian.lucky.ui.components.SubPage
 import com.jhaiian.lucky.ui.components.rememberHaptics
 import com.jhaiian.lucky.ui.components.section
-import com.jhaiian.lucky.ui.player.ControlsSize
+import com.jhaiian.lucky.ui.library.rememberPreferences
 import com.jhaiian.lucky.ui.player.ControlsTimeouts
 import com.jhaiian.lucky.ui.player.DoubleTapAction
 import com.jhaiian.lucky.ui.player.FitModeLabels
 import com.jhaiian.lucky.ui.player.HoldSpeeds
-import com.jhaiian.lucky.ui.player.LocalPlayerPalette
-import com.jhaiian.lucky.ui.player.PlayerSeekBar
-import com.jhaiian.lucky.ui.player.PlayerTint
-import com.jhaiian.lucky.ui.player.SeekStyle
-import com.jhaiian.lucky.ui.player.rememberPlayerPalette
 import com.jhaiian.lucky.ui.player.OrientationMode
+import com.jhaiian.lucky.ui.player.PlayerLook
+import com.jhaiian.lucky.ui.player.PlayerLookPreview
 import com.jhaiian.lucky.ui.player.QuickButton
 import com.jhaiian.lucky.ui.player.RepeatMode
 import com.jhaiian.lucky.ui.player.SubtitleColor
 import com.jhaiian.lucky.ui.player.SubtitleEdge
 import com.jhaiian.lucky.ui.player.SubtitlePosition
 import com.jhaiian.lucky.ui.player.SubtitleSizes
+import com.jhaiian.lucky.ui.player.TopButton
 import com.jhaiian.lucky.ui.player.formatSpeed
 import com.jhaiian.lucky.ui.theme.LocalLuckyColors
 
-private enum class PlayerDialog { FIT, ORIENTATION, DOUBLE_TAP, HOLD, TIMEOUT, COLOR, EDGE, REPEAT, SEEK_STYLE, ICON_TINT, ACCENT_TINT }
+private enum class PlayerDialog { FIT, ORIENTATION, DOUBLE_TAP, HOLD, TIMEOUT, COLOR, EDGE, REPEAT }
 
 @Composable
 internal fun rememberFloatPref(key: String, default: Float): PrefState<Float> =
@@ -117,66 +124,75 @@ private val QuickButtonIcons: Map<QuickButton, ImageVector> = mapOf(
     QuickButton.REPEAT to Icons.Rounded.Repeat,
     QuickButton.MIRROR to Icons.Rounded.Flip,
     QuickButton.PIP to Icons.Rounded.PictureInPictureAlt,
+    QuickButton.BACKGROUND to Icons.Rounded.Headphones,
     QuickButton.MOTION to Icons.Rounded.AutoAwesomeMotion,
     QuickButton.LOOP to Icons.Rounded.Loop,
     QuickButton.SCREENSHOT to Icons.Rounded.PhotoCamera
 )
 
+private val TopButtonIcons: Map<TopButton, ImageVector> = mapOf(
+    TopButton.CHAPTERS to Icons.Rounded.Bookmarks,
+    TopButton.SUBTITLES to Icons.Rounded.ClosedCaption,
+    TopButton.AUDIO to Icons.Rounded.Audiotrack,
+    TopButton.STATS to Icons.Rounded.Info
+)
+
 @Composable
-private fun TintChoice(tint: PlayerTint, selected: Boolean, onClick: () -> Unit) {
+private fun OrderArrow(icon: ImageVector, description: String, enabled: Boolean, onClick: () -> Unit) {
     val colors = LocalLuckyColors.current
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Box(
-            Modifier
-                .padding(end = 10.dp)
-                .size(26.dp)
-                .clip(CircleShape)
-                .background(tint.resolve(colors.primary))
-                .border(1.dp, colors.divider, CircleShape)
-        )
-        ChoiceRow(stringResource(tint.labelRes), selected, onClick = onClick, modifier = Modifier.weight(1f))
+    Box(
+        Modifier
+            .size(36.dp)
+            .clip(CircleShape)
+            .alpha(if (enabled) 1f else 0.3f)
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(icon, contentDescription = description, tint = colors.secondaryText, modifier = Modifier.size(22.dp))
     }
 }
 
 @Composable
-private fun SeekPreview(style: SeekStyle, icon: PlayerTint, accent: PlayerTint) {
-    val palette = rememberPlayerPalette(icon, accent)
-    CompositionLocalProvider(LocalPlayerPalette provides palette) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp)
-                .clip(RoundedCornerShape(18.dp))
-                .background(Brush.verticalGradient(listOf(Color(0xFF2A2A2E), Color(0xFF0E0E10))))
-                .padding(horizontal = 14.dp, vertical = 10.dp)
-        ) {
-            Box(
-                Modifier
-                    .size(40.dp)
-                    .clip(CircleShape)
-                    .background(palette.accent),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(Icons.Rounded.PlayArrow, contentDescription = null, tint = palette.onAccent)
+private fun QuickButtonRow(
+    icon: ImageVector,
+    title: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    canMoveUp: Boolean,
+    canMoveDown: Boolean,
+    onMoveUp: (() -> Unit)?,
+    onMoveDown: (() -> Unit)?
+) {
+    val colors = LocalLuckyColors.current
+    val haptics = rememberHaptics()
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable {
+                haptics.toggle(!checked)
+                onCheckedChange(!checked)
             }
-            Icon(
-                Icons.Rounded.ClosedCaption,
-                contentDescription = null,
-                tint = palette.icon,
-                modifier = Modifier.padding(horizontal = 12.dp)
-            )
-            PlayerSeekBar(
-                style = style,
-                value = 0.42f,
-                enabled = true,
-                playing = true,
-                markers = emptyList(),
-                onValueChange = {},
-                onValueChangeFinished = {},
-                modifier = Modifier.weight(1f)
-            )
+            .padding(start = 16.dp, end = 12.dp, top = 10.dp, bottom = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        IconTileIcon(icon)
+        Text(
+            title,
+            style = MaterialTheme.typography.bodyLarge,
+            color = colors.onSurface,
+            fontWeight = FontWeight.Medium,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier
+                .weight(1f)
+                .padding(start = 14.dp, end = 4.dp)
+        )
+        if (onMoveUp != null && onMoveDown != null) {
+            OrderArrow(Icons.Rounded.KeyboardArrowUp, stringResource(R.string.settings_move_up), canMoveUp, onMoveUp)
+            OrderArrow(Icons.Rounded.KeyboardArrowDown, stringResource(R.string.settings_move_down), canMoveDown, onMoveDown)
+            Spacer(Modifier.width(6.dp))
         }
+        LuckySwitch(checked = checked, onCheckedChange = null)
     }
 }
 
@@ -189,7 +205,7 @@ private fun holdLabel(speed: Float): String =
     if (speed <= 0f) stringResource(R.string.player_option_off) else formatSpeed(speed)
 
 @Composable
-internal fun PlayerSettings(onBack: () -> Unit, modifier: Modifier = Modifier) {
+internal fun PlayerSettings(onBack: () -> Unit, onOpenLook: () -> Unit, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val haptics = rememberHaptics()
     val defaultFit = rememberStringPref(LuckyPrefs.PLAYER_DEFAULT_FIT, FitMode.FIT.name)
@@ -205,21 +221,32 @@ internal fun PlayerSettings(onBack: () -> Unit, modifier: Modifier = Modifier) {
     val seekButtons = rememberBooleanPref(LuckyPrefs.PLAYER_SEEK_BUTTONS, true)
     val showRemaining = rememberBooleanPref(LuckyPrefs.PLAYER_SHOW_REMAINING, false)
     val showClock = rememberBooleanPref(LuckyPrefs.PLAYER_SHOW_CLOCK, false)
-    val controlsSize = rememberStringPref(LuckyPrefs.PLAYER_CONTROLS_SIZE, ControlsSize.NORMAL.key)
     val quickButtons = rememberPref(
         LuckyPrefs.PLAYER_QUICK_BUTTONS,
         QuickButton.defaults,
         { QuickButton.read(this) },
-        { putStringSet(LuckyPrefs.PLAYER_QUICK_BUTTONS, HashSet(it)).putBoolean(LuckyPrefs.PLAYER_QUICK_MOTION, true) }
+        { putStringSet(LuckyPrefs.PLAYER_QUICK_BUTTONS, HashSet(it)).putBoolean(LuckyPrefs.PLAYER_QUICK_MOTION, true).putBoolean(LuckyPrefs.PLAYER_QUICK_BACKGROUND, true) }
     )
-    val seekStyle = rememberStringPref(LuckyPrefs.PLAYER_SEEK_STYLE, SeekStyle.SLIDER.key)
-    val iconTint = rememberStringPref(LuckyPrefs.PLAYER_ICON_TINT, PlayerTint.WHITE.key)
-    val accentTint = rememberStringPref(LuckyPrefs.PLAYER_ACCENT_TINT, PlayerTint.THEME.key)
+    val quickOrder = rememberPref(
+        LuckyPrefs.PLAYER_QUICK_ORDER,
+        QuickButton.entries.toList(),
+        { QuickButton.order(this) },
+        { putString(LuckyPrefs.PLAYER_QUICK_ORDER, QuickButton.encodeOrder(it)) }
+    )
+    val topButtons = rememberPref(
+        LuckyPrefs.PLAYER_TOP_BUTTONS,
+        TopButton.defaults,
+        { TopButton.read(this) },
+        { putStringSet(LuckyPrefs.PLAYER_TOP_BUTTONS, HashSet(it)) }
+    )
+    val look = PlayerLook.from(rememberPreferences())
     val autoplayNext = rememberBooleanPref(LuckyPrefs.PLAYER_AUTOPLAY_NEXT, true)
     val repeat = rememberStringPref(LuckyPrefs.PLAYER_REPEAT, RepeatMode.OFF.key)
     val autoPip = rememberBooleanPref(LuckyPrefs.PLAYER_AUTO_PIP, true)
+    val backgroundPlay = rememberBooleanPref(LuckyPrefs.PLAYER_BACKGROUND_PLAY, false)
     val rememberBrightness = rememberBooleanPref(LuckyPrefs.PLAYER_REMEMBER_BRIGHTNESS, false)
     val rememberSpeed = rememberBooleanPref(LuckyPrefs.PLAYER_REMEMBER_SPEED, false)
+    val rememberVolume = rememberBooleanPref(LuckyPrefs.PLAYER_REMEMBER_VOLUME, true)
     val subtitleSize = rememberIntPref(LuckyPrefs.SUBTITLE_SIZE, 100)
     val subtitleColor = rememberStringPref(LuckyPrefs.SUBTITLE_COLOR, SubtitleColor.WHITE.key)
     val subtitleEdge = rememberStringPref(LuckyPrefs.SUBTITLE_EDGE, SubtitleEdge.OUTLINE.key)
@@ -239,10 +266,21 @@ internal fun PlayerSettings(onBack: () -> Unit, modifier: Modifier = Modifier) {
     val color = SubtitleColor.parse(subtitleColor.value)
     val edge = SubtitleEdge.parse(subtitleEdge.value)
     val position = SubtitlePosition.parse(subtitlePosition.value)
-    val size = ControlsSize.parse(controlsSize.value)
-    val style = SeekStyle.parse(seekStyle.value)
-    val icon = PlayerTint.parse(iconTint.value, PlayerTint.WHITE)
-    val accent = PlayerTint.parse(accentTint.value, PlayerTint.THEME).takeIf { it != PlayerTint.WHITE } ?: PlayerTint.THEME
+    val movable = quickOrder.value.filter { it != QuickButton.LOCK && (it != QuickButton.PIP || pipAvailable) }
+    val moveQuick: (QuickButton, Int) -> Unit = { button, delta ->
+        val from = movable.indexOf(button)
+        val to = from + delta
+        if (from >= 0 && to in movable.indices) {
+            haptics.tick()
+            val list = quickOrder.value.toMutableList()
+            val other = movable[to]
+            val a = list.indexOf(button)
+            val b = list.indexOf(other)
+            list[a] = other
+            list[b] = button
+            quickOrder.update(list)
+        }
+    }
 
     val pageTitle = stringResource(R.string.settings_player)
     val displayTitle = stringResource(R.string.settings_player_display)
@@ -251,10 +289,16 @@ internal fun PlayerSettings(onBack: () -> Unit, modifier: Modifier = Modifier) {
     val controlsTitle = stringResource(R.string.settings_player_controls)
     val lookTitle = stringResource(R.string.settings_player_look)
     val buttonsTitle = stringResource(R.string.settings_player_quick_buttons)
-    val buttonsNote = stringResource(R.string.settings_player_quick_buttons_note)
+    val buttonsNote = stringResource(R.string.settings_player_quick_buttons_order_note)
+    val topTitle = stringResource(R.string.settings_player_top_buttons)
+    val topNote = stringResource(R.string.settings_player_top_buttons_note)
+    val lookSummary = listOf(
+        stringResource(look.layout.labelRes),
+        stringResource(look.buttonStyle.labelRes),
+        stringResource(look.seekStyle.labelRes)
+    ).joinToString(" · ")
     val subtitlesTitle = stringResource(R.string.settings_player_subtitles)
     val behaviorTitle = stringResource(R.string.settings_player_behavior)
-    val sizeLabels = ControlsSize.entries.map { stringResource(it.labelRes) }
     val subtitleSizeLabels = SubtitleSizes.map { "$it%" }
     val positionLabels = SubtitlePosition.entries.map { stringResource(it.labelRes) }
 
@@ -362,56 +406,62 @@ internal fun PlayerSettings(onBack: () -> Unit, modifier: Modifier = Modifier) {
                     checked = showClock.value,
                     onCheckedChange = { showClock.update(it) }
                 )
-                RowDivider()
-                Text(
-                    stringResource(R.string.settings_player_controls_size),
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = FontWeight.Medium,
-                    color = LocalLuckyColors.current.onSurface,
-                    modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 14.dp)
-                )
-                ChoiceTiles(
-                    options = sizeLabels,
-                    selected = ControlsSize.entries.indexOf(size),
-                    onSelect = { index ->
-                        haptics.tick()
-                        controlsSize.update(ControlsSize.entries[index].key)
-                    },
-                    modifier = Modifier.padding(12.dp)
-                )
             }
             section(key = "player_look", title = lookTitle) {
-                SeekPreview(style, icon, accent)
-                SettingsRow(
-                    icon = Icons.Rounded.LinearScale,
-                    title = stringResource(R.string.settings_player_seek_style),
-                    subtitle = stringResource(style.labelRes),
-                    onClick = { dialog = PlayerDialog.SEEK_STYLE }
+                PlayerLookPreview(
+                    look = look,
+                    quickButtons = quickButtons.value,
+                    quickOrder = quickOrder.value,
+                    onClick = onOpenLook,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 12.dp, end = 12.dp, top = 12.dp)
                 )
-                RowDivider()
                 SettingsRow(
                     icon = Icons.Rounded.Palette,
-                    title = stringResource(R.string.settings_player_icon_color),
-                    subtitle = stringResource(icon.labelRes),
-                    onClick = { dialog = PlayerDialog.ICON_TINT }
-                )
-                RowDivider()
-                SettingsRow(
-                    icon = Icons.Rounded.ColorLens,
-                    title = stringResource(R.string.settings_player_accent_color),
-                    subtitle = stringResource(accent.labelRes),
-                    onClick = { dialog = PlayerDialog.ACCENT_TINT }
+                    title = stringResource(R.string.settings_player_look_page),
+                    subtitle = lookSummary,
+                    onClick = onOpenLook
                 )
             }
             section(key = "player_buttons", title = buttonsTitle, note = buttonsNote) {
-                QuickButton.entries.filter { it != QuickButton.PIP || pipAvailable }.forEachIndexed { index, button ->
-                    if (index > 0) RowDivider()
-                    SettingsSwitchRow(
+                QuickButtonRow(
+                    icon = QuickButtonIcons.getValue(QuickButton.LOCK),
+                    title = stringResource(QuickButton.LOCK.labelRes),
+                    checked = QuickButton.LOCK.key in quickButtons.value,
+                    onCheckedChange = { checked ->
+                        quickButtons.update(if (checked) quickButtons.value + QuickButton.LOCK.key else quickButtons.value - QuickButton.LOCK.key)
+                    },
+                    canMoveUp = false,
+                    canMoveDown = false,
+                    onMoveUp = null,
+                    onMoveDown = null
+                )
+                movable.forEachIndexed { index, button ->
+                    RowDivider()
+                    QuickButtonRow(
                         icon = QuickButtonIcons.getValue(button),
                         title = stringResource(button.labelRes),
                         checked = button.key in quickButtons.value,
                         onCheckedChange = { checked ->
                             quickButtons.update(if (checked) quickButtons.value + button.key else quickButtons.value - button.key)
+                        },
+                        canMoveUp = index > 0,
+                        canMoveDown = index < movable.lastIndex,
+                        onMoveUp = { moveQuick(button, -1) },
+                        onMoveDown = { moveQuick(button, 1) }
+                    )
+                }
+            }
+            section(key = "player_top_buttons", title = topTitle, note = topNote) {
+                TopButton.entries.forEachIndexed { index, button ->
+                    if (index > 0) RowDivider()
+                    SettingsSwitchRow(
+                        icon = TopButtonIcons.getValue(button),
+                        title = stringResource(button.labelRes),
+                        checked = button.key in topButtons.value,
+                        onCheckedChange = { checked ->
+                            topButtons.update(if (checked) topButtons.value + button.key else topButtons.value - button.key)
                         }
                     )
                 }
@@ -524,6 +574,14 @@ internal fun PlayerSettings(onBack: () -> Unit, modifier: Modifier = Modifier) {
                 }
                 RowDivider()
                 SettingsSwitchRow(
+                    icon = Icons.Rounded.Headphones,
+                    title = stringResource(R.string.settings_player_background_play),
+                    subtitle = stringResource(R.string.settings_player_background_play_summary),
+                    checked = backgroundPlay.value,
+                    onCheckedChange = { backgroundPlay.update(it) }
+                )
+                RowDivider()
+                SettingsSwitchRow(
                     icon = Icons.Rounded.Brightness6,
                     title = stringResource(R.string.settings_player_remember_brightness),
                     subtitle = stringResource(R.string.settings_player_remember_brightness_summary),
@@ -537,6 +595,14 @@ internal fun PlayerSettings(onBack: () -> Unit, modifier: Modifier = Modifier) {
                     subtitle = stringResource(R.string.settings_player_remember_speed_summary),
                     checked = rememberSpeed.value,
                     onCheckedChange = { rememberSpeed.update(it) }
+                )
+                RowDivider()
+                SettingsSwitchRow(
+                    icon = Icons.AutoMirrored.Rounded.VolumeUp,
+                    title = stringResource(R.string.settings_player_remember_volume),
+                    subtitle = stringResource(R.string.settings_player_remember_volume_summary),
+                    checked = rememberVolume.value,
+                    onCheckedChange = { rememberVolume.update(it) }
                 )
             }
         }
@@ -617,37 +683,6 @@ internal fun PlayerSettings(onBack: () -> Unit, modifier: Modifier = Modifier) {
         ) {
             SubtitleEdge.entries.forEach { option ->
                 ChoiceRow(stringResource(option.labelRes), option == edge, onClick = { choose { subtitleEdge.update(option.key) } })
-            }
-        }
-        SettingsDialog(
-            visible = dialog == PlayerDialog.SEEK_STYLE,
-            icon = Icons.Rounded.LinearScale,
-            title = stringResource(R.string.settings_player_seek_style),
-            onDismiss = { dialog = null }
-        ) {
-            SeekStyle.entries.forEach { option ->
-                ChoiceRow(stringResource(option.labelRes), option == style, onClick = { choose { seekStyle.update(option.key) } })
-            }
-        }
-        SettingsDialog(
-            visible = dialog == PlayerDialog.ICON_TINT,
-            icon = Icons.Rounded.Palette,
-            title = stringResource(R.string.settings_player_icon_color),
-            onDismiss = { dialog = null }
-        ) {
-            PlayerTint.entries.forEach { option ->
-                TintChoice(option, option == icon) { choose { iconTint.update(option.key) } }
-            }
-        }
-        SettingsDialog(
-            visible = dialog == PlayerDialog.ACCENT_TINT,
-            icon = Icons.Rounded.ColorLens,
-            title = stringResource(R.string.settings_player_accent_color),
-            header = stringResource(R.string.settings_player_accent_color_hint),
-            onDismiss = { dialog = null }
-        ) {
-            PlayerTint.accents.forEach { option ->
-                TintChoice(option, option == accent) { choose { accentTint.update(option.key) } }
             }
         }
         SettingsDialog(

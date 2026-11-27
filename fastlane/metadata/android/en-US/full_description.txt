@@ -23,11 +23,13 @@ Lucky is an open-source video player for the videos already on your phone. No ac
 <b>Player</b>
 • Swipe for brightness, volume, and seeking, double-tap to skip, pinch to zoom, and hold to speed up
 • Picture-in-picture, chapters, A–B repeat, a sleep timer, and frame-by-frame stepping
+• Play in the background with a mini-player, Audio only mode, volume boost up to 300%, and Skip intro and credits buttons
 • Remove black bars, crop, zoom, mirror, or rotate the video, and take screenshots
 
 <b>Library and looks</b>
 • Finds your videos by itself, or only looks in the folders you pick
 • Continue watching, recently added, folders, history, and search
+• Open videos from other apps, and long-press any video to share, rename, delete, or see its details
 • Light and dark themes, accent colors, and Material You
 • Adaptive layout for phones, tablets, foldables, and wide screens
 

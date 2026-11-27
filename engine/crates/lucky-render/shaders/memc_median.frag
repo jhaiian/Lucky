@@ -38,5 +38,5 @@ void main() {
     ivec4 j = at(c + ivec2(1, 1));
     int x = median9(a.x, b.x, d.x, e.x, f.x, g.x, h.x, i.x, j.x);
     int y = median9(a.y, b.y, d.y, e.y, f.y, g.y, h.y, i.y, j.y);
-    o_field = ivec4(x, y, f.z, 0);
+    o_field = ivec4(x, y, f.z, f.w);
 }

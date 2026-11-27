@@ -23,11 +23,13 @@ Lucky adalah pemutar video open source untuk video yang sudah ada di ponsel Anda
 <b>Pemutar</b>
 • Geser untuk kecerahan, volume, dan seek, ketuk dua kali untuk melompat, cubit untuk zoom, dan tahan untuk mempercepat
 • Picture-in-picture, chapter, pengulangan A–B, timer tidur, dan maju per frame
+• Putar di latar belakang dengan mini-player, mode Hanya audio, penguat volume hingga 300%, dan tombol lewati intro dan kredit
 • Hapus bilah hitam, potong, zoom, cerminkan, atau putar video, dan ambil screenshot
 
 <b>Pustaka dan tampilan</b>
 • Menemukan video Anda secara otomatis, atau hanya mencari di folder pilihan Anda
 • Lanjutkan menonton, baru ditambahkan, folder, riwayat, dan pencarian
+• Buka video dari aplikasi lain, dan tekan lama video apa pun untuk membagikan, mengganti nama, menghapus, atau melihat detailnya
 • Tema terang dan gelap, warna aksen, dan Material You
 • Tata letak adaptif untuk ponsel, tablet, perangkat lipat, dan layar lebar
 

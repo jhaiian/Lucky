@@ -10,7 +10,6 @@ import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.graphics.drawable.Icon
 import android.media.AudioManager
-import android.os.BatteryManager
 import android.os.Build
 import android.provider.Settings
 import android.util.Rational
@@ -112,6 +111,22 @@ internal class VolumeControl(context: Context) {
         }
         return level.coerceIn(0f, 1f)
     }
+
+    val adjustable: Boolean
+        get() = manager != null && runCatching { !manager.isVolumeFixed }.getOrDefault(true)
+
+    fun atMax(): Boolean = (manager?.getStreamVolume(AudioManager.STREAM_MUSIC) ?: 0) >= max
+
+    fun step(raise: Boolean): Float {
+        val audio = manager ?: return level()
+        val direction = if (raise) AudioManager.ADJUST_RAISE else AudioManager.ADJUST_LOWER
+        val before = audio.getStreamVolume(AudioManager.STREAM_MUSIC)
+        runCatching { audio.adjustStreamVolume(AudioManager.STREAM_MUSIC, direction, 0) }
+        if (raise && before < max && audio.getStreamVolume(AudioManager.STREAM_MUSIC) == before) {
+            runCatching { audio.adjustStreamVolume(AudioManager.STREAM_MUSIC, direction, AudioManager.FLAG_SHOW_UI) }
+        }
+        return level()
+    }
 }
 
 internal fun pipSupported(context: Context): Boolean =
@@ -157,20 +172,15 @@ internal fun rememberInPictureInPicture(activity: ComponentActivity?): Boolean {
 }
 
 @Composable
-internal fun rememberClockText(context: Context, active: Boolean): Pair<String, Int?> {
-    val state by produceState(currentStatus(context), active) {
+internal fun rememberClockText(context: Context, active: Boolean): ClockStatus {
+    val time by produceState(currentTime(context), active) {
         while (active) {
-            value = currentStatus(context)
+            value = currentTime(context)
             delay(15_000)
         }
     }
-    return state
+    return ClockStatus(time, rememberBatteryStatus(context, active))
 }
 
-private fun currentStatus(context: Context): Pair<String, Int?> {
-    val time = android.text.format.DateFormat.getTimeFormat(context).format(Date())
-    val battery = context.getSystemService(BatteryManager::class.java)
-        ?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
-        ?.takeIf { it in 0..100 }
-    return time to battery
-}
+private fun currentTime(context: Context): String =
+    android.text.format.DateFormat.getTimeFormat(context).format(Date())

@@ -190,6 +190,15 @@ impl FrameQueue {
         })
     }
 
+    pub fn with_front<R>(&self, serial: u64, f: impl FnOnce(&VideoFrame) -> R) -> Option<R> {
+        let state = self.lock();
+        let frame = state.items.iter().find_map(|item| match item {
+            FrameItem::Frame(frame) if frame.serial == serial => Some(frame),
+            _ => None,
+        })?;
+        Some(f(frame))
+    }
+
     pub fn wait_readable(&self, timeout: Duration) {
         let state = self.lock();
         if state.items.is_empty() && !state.aborted {

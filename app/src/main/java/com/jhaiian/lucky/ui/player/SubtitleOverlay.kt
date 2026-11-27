@@ -289,7 +289,6 @@ private fun BitmapCue(
 }
 
 private const val MAX_ASS_FRAME = 4096
-private const val TEXT_LIFT_DP = 120
 
 private class AssImage(val x: Int, val y: Int, val image: ImageBitmap)
 
@@ -300,6 +299,7 @@ private fun AssLayer(
     scale: Float,
     text: Boolean,
     raised: Boolean,
+    raiseBy: Dp,
     render: (Long, Int, Int, Float, Float, Boolean) -> SubtitleFrame
 ) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -308,7 +308,7 @@ private fun AssLayer(
         val full = videoBox(container, placement)
         val box = if (text) full.visible(container) else full
         val lift = if (text && raised && box.height > 0f) {
-            (with(density) { TEXT_LIFT_DP.dp.toPx() } / box.height * 100f).coerceIn(0f, 60f)
+            (with(density) { raiseBy.toPx() } / box.height * 100f).coerceIn(0f, 60f)
         } else {
             0f
         }
@@ -361,6 +361,7 @@ fun SubtitleOverlay(
     videoHeight: Int,
     raised: Boolean,
     style: SubtitleLook,
+    raiseBy: Dp = 120.dp,
     scale: Float,
     assActive: Boolean,
     textAss: Boolean,
@@ -369,7 +370,7 @@ fun SubtitleOverlay(
     modifier: Modifier = Modifier
 ) {
     if (assActive) {
-        AssLayer(position, placement, style.sizePercent / 100f * scale, textAss, raised, renderAss)
+        AssLayer(position, placement, style.sizePercent / 100f * scale, textAss, raised, raiseBy, renderAss)
         return
     }
     val look = rememberCaptionLook(style, scale)
@@ -401,7 +402,7 @@ fun SubtitleOverlay(
             val reference = shown.height.coerceAtLeast(container.height * 0.3f)
             val sizePx = (reference * 0.052f * look.fontScale).coerceAtLeast(with(density) { 12.sp.toPx() })
             val bottomInset = container.height - (shown.top + shown.height)
-            val lift = with(density) { (bottomInset + shown.height * style.position.margin).toDp() } + if (raised) 120.dp else 0.dp
+            val lift = with(density) { (bottomInset + shown.height * style.position.margin).toDp() } + if (raised) raiseBy else 0.dp
             Box(
                 Modifier
                     .fillMaxSize()

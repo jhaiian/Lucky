@@ -49,6 +49,9 @@ fn main() {
         "memc_tiles.frag",
         "memc_stats.frag",
         "memc_select.frag",
+        "memc_settle.frag",
+        "memc_mask.frag",
+        "memc_soften.frag",
         "memc_render.frag",
     ];
     for shader in shaders {

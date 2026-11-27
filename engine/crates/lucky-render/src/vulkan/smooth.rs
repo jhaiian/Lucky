@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 
 use ash::vk;
-use lucky_player::{MotionConfig, VideoFrame};
+use lucky_player::{Ahead, MotionConfig, VideoFrame};
 
 use super::motion::{Motion, MotionFrame};
 use super::{Core, ExternalKey, VulkanPresenter, color_range, find_memory, spirv};
 use crate::egl::monotonic_ns;
 use crate::gles::GlesPresenter;
-use crate::memc::{DUPLICATE_LIMIT, MemcParams};
+use crate::memc::{DUPLICATE_LIMIT, MemcParams, scaled_size};
 
 const FULLSCREEN_VERT: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/fullscreen.vert.spv"));
 const BLEND_FRAG: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/blend.frag.spv"));
@@ -15,7 +15,7 @@ const BLEND_FRAG: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/blend.frag.s
 pub(super) const BLEND_PIPELINE: i32 = 0;
 pub(super) const MOTION_PIPELINE: i32 = 1;
 
-const SETS: u32 = 128;
+const SETS: u32 = 192;
 const BINDINGS: u32 = 4;
 
 pub(super) fn bytes_of<T: Copy>(value: &T) -> &[u8] {
@@ -317,11 +317,14 @@ pub(super) struct Smooth {
     pub(super) fullscreen: vk::ShaderModule,
     blend_fragment: vk::ShaderModule,
     blend_layout: vk::PipelineLayout,
-    pub(super) slots: [Option<Slot>; 2],
+    pub(super) slots: [Option<Slot>; 3],
     slot_version: u64,
+    lanes: usize,
     pub(super) yuv: HashMap<i32, vk::Pipeline>,
     pub(super) external: HashMap<(ExternalKey, i32), vk::Pipeline>,
     pub(super) motion: Option<Motion>,
+    shrunk: Option<Rt>,
+    motion_offscreen: vk::Pipeline,
 }
 
 impl Smooth {
@@ -337,11 +340,14 @@ impl Smooth {
                 fullscreen: vk::ShaderModule::null(),
                 blend_fragment: vk::ShaderModule::null(),
                 blend_layout: vk::PipelineLayout::null(),
-                slots: [None, None],
+                slots: [None, None, None],
                 slot_version: 0,
+                lanes: 0,
                 yuv: HashMap::new(),
                 external: HashMap::new(),
                 motion: None,
+                shrunk: None,
+                motion_offscreen: vk::Pipeline::null(),
             };
             if let Err(error) = smooth.build(core) {
                 smooth.destroy(core);
@@ -435,9 +441,34 @@ impl Smooth {
         }
     }
 
+    unsafe fn ensure_shrunk(&mut self, core: &Core, size: (i32, i32)) -> Result<(), String> {
+        unsafe {
+            if self.motion_offscreen == vk::Pipeline::null() {
+                let motion = self.motion.as_ref().ok_or("no motion state")?;
+                self.motion_offscreen = fullscreen_pipeline(core, self.render_pass, motion.render_layout(), self.fullscreen, motion.render_module())
+                    .map_err(|e| format!("reduced motion pipeline: {e}"))?;
+            }
+            if self.shrunk.as_ref().is_some_and(|rt| (rt.width, rt.height) == size) {
+                return Ok(());
+            }
+            if let Some(old) = self.shrunk.take() {
+                old.destroy(core);
+            }
+            self.shrunk = Some(Rt::new(core, self.render_pass, self.format, size.0, size.1, vk::ImageUsageFlags::empty())?);
+            Ok(())
+        }
+    }
+
     pub(super) unsafe fn destroy(&mut self, core: &Core) {
         unsafe {
             let device = &core.device;
+            if self.motion_offscreen != vk::Pipeline::null() {
+                device.destroy_pipeline(self.motion_offscreen, None);
+                self.motion_offscreen = vk::Pipeline::null();
+            }
+            if let Some(shrunk) = self.shrunk.take() {
+                shrunk.destroy(core);
+            }
             if let Some(mut motion) = self.motion.take() {
                 motion.destroy(core);
             }
@@ -468,6 +499,7 @@ struct BlendPlan {
     from_slot: usize,
     from_new: bool,
     motion: bool,
+    ahead: Option<(usize, bool)>,
 }
 
 fn same_frame(a: &VideoFrame, b: &VideoFrame) -> bool {
@@ -526,36 +558,36 @@ impl VulkanPresenter {
         let key = Some((video.serial, video.pts_us));
         let extent = self.target.as_ref()?.extent;
         let smooth = self.smooth.as_ref()?;
-        (0..2).find(|index| {
+        (0..3).find(|index| {
             smooth.slots[*index]
                 .as_ref()
                 .is_some_and(|slot| slot.key == key && slot.rt.width == extent.width as i32 && slot.rt.height == extent.height as i32)
         })
     }
 
-    fn pick_slot(&self, keep: Option<usize>) -> usize {
-        match keep {
-            Some(0) => 1,
-            Some(1) => 0,
-            _ => match self.smooth.as_ref() {
-                Some(smooth) if smooth.slots[0].is_some() && smooth.slots[1].is_none() => 1,
-                _ => 0,
-            },
-        }
+    fn pick_slot(&self, keep: &[usize]) -> usize {
+        let age = |index: usize| {
+            self.smooth
+                .as_ref()
+                .and_then(|smooth| smooth.slots[index].as_ref())
+                .filter(|slot| slot.key.is_some())
+                .map_or(0, |slot| slot.version + 1)
+        };
+        (0..3).filter(|index| !keep.contains(index)).min_by_key(|index| age(*index)).unwrap_or(0)
     }
 
     fn plan_slots(&self, from: &VideoFrame, to: &VideoFrame, needs_from: bool) -> (usize, bool, usize, bool) {
         let holding = self.slot_for(from);
         let (to_slot, to_new) = match self.slot_for(to) {
             Some(index) => (index, false),
-            None => (self.pick_slot(holding), true),
+            None => (self.pick_slot(holding.as_slice()), true),
         };
         if !needs_from || same_frame(from, to) {
             return (to_slot, to_new, to_slot, false);
         }
         match self.slot_for(from) {
             Some(index) => (to_slot, to_new, index, false),
-            None => (to_slot, to_new, self.pick_slot(Some(to_slot)), true),
+            None => (to_slot, to_new, self.pick_slot(&[to_slot]), true),
         }
     }
 
@@ -632,11 +664,23 @@ impl VulkanPresenter {
         [x0, y0, x1, y1]
     }
 
+    fn free_lane(&self) -> Option<usize> {
+        self.smooth.as_ref().map(|smooth| smooth.lanes).filter(|lane| *lane < 2)
+    }
+
+    fn reset_lanes(&mut self) {
+        if let Some(smooth) = self.smooth.as_mut() {
+            smooth.lanes = 0;
+        }
+    }
+
     unsafe fn render_slot(&mut self, video: &VideoFrame, index: usize) -> Result<(), String> {
         unsafe {
-            let prepared = self.prepare_source(video, index, true, None)?;
+            let lane = self.free_lane().ok_or("no free upload lane")?;
+            let prepared = self.prepare_source(video, lane, true, None)?;
             let core = self.core.as_ref().ok_or("no device")?;
             let smooth = self.smooth.as_mut().ok_or("no smooth state")?;
+            smooth.lanes += 1;
             let slot = smooth.slots[index].as_mut().ok_or("smooth slot is missing")?;
             slot.key = None;
             record_draw(
@@ -662,25 +706,37 @@ impl VulkanPresenter {
         }
     }
 
-    unsafe fn plan_blend(&mut self, from: &VideoFrame, to: &VideoFrame, weight: f32) -> Result<BlendPlan, String> {
+    unsafe fn plan_blend(&mut self, from: &VideoFrame, to: &VideoFrame, weight: f32, upcoming: Option<&VideoFrame>) -> Result<BlendPlan, String> {
         unsafe {
             self.ensure_smooth()?;
             self.refresh_target(to)?;
             let (to_slot, to_new, from_slot, from_new) = self.plan_slots(from, to, weight < 0.999);
             let motion = self.motion.level > 0 && from_slot != to_slot && weight > 0.002 && weight < 0.998;
+            let ahead = match upcoming {
+                Some(next) if self.motion.level > 0 && !same_frame(next, to) => match self.slot_for(next) {
+                    Some(index) if index != to_slot && index != from_slot => Some((index, false)),
+                    Some(_) => None,
+                    None => Some((self.pick_slot(&[to_slot, from_slot]), true)),
+                },
+                _ => None,
+            };
             if to_new {
                 self.ensure_slot_image(to_slot)?;
             }
             if from_new {
                 self.ensure_slot_image(from_slot)?;
             }
-            if motion {
-                self.ensure_motion(false)?;
-                self.ensure_swapchain_pipeline(MOTION_PIPELINE)?;
-            } else {
-                self.ensure_swapchain_pipeline(BLEND_PIPELINE)?;
+            if let Some((slot, true)) = ahead {
+                self.ensure_slot_image(slot)?;
             }
-            Ok(BlendPlan { to_slot, to_new, from_slot, from_new, motion })
+            if motion || ahead.is_some() {
+                self.ensure_motion(false)?;
+            }
+            if motion {
+                self.ensure_swapchain_pipeline(MOTION_PIPELINE)?;
+            }
+            self.ensure_swapchain_pipeline(BLEND_PIPELINE)?;
+            Ok(BlendPlan { to_slot, to_new, from_slot, from_new, motion, ahead })
         }
     }
 
@@ -715,23 +771,68 @@ impl VulkanPresenter {
         }
     }
 
-    unsafe fn record_motion_pass(&mut self, index: u32, to: &VideoFrame, plan: &BlendPlan, weight: f32) -> Result<(), String> {
+    unsafe fn record_motion_pass(&mut self, index: u32, to: &VideoFrame, plan: &BlendPlan, weight: f32) -> Result<u32, String> {
         unsafe {
             let rect = self.video_rect(to);
-            let params = MemcParams { level: self.motion.level, protection: self.motion.protection, scene: self.motion.scene };
+            let params = MemcParams { level: self.motion.level };
+            let scale = self.motion.scale();
             let core = self.core.as_ref().ok_or("no device")?;
             let target = self.target.as_ref().ok_or("no target")?;
             let size = (target.extent.width as i32, target.extent.height as i32);
+            let out = scaled_size(size, scale);
             let smooth = self.smooth.as_mut().ok_or("no smooth state")?;
+            if out != size {
+                smooth.ensure_shrunk(core, out)?;
+            }
             let frame = |slot: &Option<Slot>| slot.as_ref().map(|slot| MotionFrame { view: slot.rt.view, version: slot.version });
             let (Some(a), Some(b)) = (frame(&smooth.slots[plan.from_slot]), frame(&smooth.slots[plan.to_slot])) else {
                 return Err("motion source is missing".into());
             };
             let ctx = smooth.ctx(core);
             let motion = smooth.motion.as_mut().ok_or("motion state is missing")?;
-            let mut draw = motion.record(&ctx, a, b, size, rect, weight.clamp(0.0, 1.0), params)?;
-            draw.push.set_dither(super::dither_levels(target.dither));
-            let pipeline = *target.smooth_pipelines.get(&MOTION_PIPELINE).ok_or("motion pipeline is missing")?;
+            let mut draw = motion.record(&ctx, a, b, size, rect, weight.clamp(0.0, 1.0), params, out)?;
+            let dither = super::dither_levels(target.dither);
+            if out == size {
+                draw.push.set_dither(dither);
+                let pipeline = *target.smooth_pipelines.get(&MOTION_PIPELINE).ok_or("motion pipeline is missing")?;
+                record_draw(
+                    core,
+                    core.command_buffer,
+                    &Draw {
+                        render_pass: target.render_pass,
+                        framebuffer: target.framebuffers[index as usize],
+                        extent: target.extent,
+                        clear: black(),
+                        pipeline,
+                        layout: draw.layout,
+                        set: draw.set,
+                        stages: vk::ShaderStageFlags::FRAGMENT,
+                        push: bytes_of(&draw.push),
+                        vertices: 3,
+                    },
+                );
+                return Ok(draw.stages);
+            }
+            let shrunk = smooth.shrunk.as_ref().ok_or("reduced motion target is missing")?;
+            record_draw(
+                core,
+                core.command_buffer,
+                &Draw {
+                    render_pass: smooth.render_pass,
+                    framebuffer: shrunk.framebuffer,
+                    extent: vk::Extent2D { width: out.0 as u32, height: out.1 as u32 },
+                    clear: black(),
+                    pipeline: smooth.motion_offscreen,
+                    layout: draw.layout,
+                    set: draw.set,
+                    stages: vk::ShaderStageFlags::FRAGMENT,
+                    push: bytes_of(&draw.push),
+                    vertices: 3,
+                },
+            );
+            let set = ctx.bind(&[(shrunk.view, true), (shrunk.view, true)])?;
+            let pipeline = *target.smooth_pipelines.get(&BLEND_PIPELINE).ok_or("blend pipeline is missing")?;
+            let push = [0.0f32, dither];
             record_draw(
                 core,
                 core.command_buffer,
@@ -741,32 +842,91 @@ impl VulkanPresenter {
                     extent: target.extent,
                     clear: black(),
                     pipeline,
-                    layout: draw.layout,
-                    set: draw.set,
+                    layout: smooth.blend_layout,
+                    set,
                     stages: vk::ShaderStageFlags::FRAGMENT,
-                    push: bytes_of(&draw.push),
+                    push: bytes_of(&push),
                     vertices: 3,
                 },
             );
+            Ok(draw.stages)
+        }
+    }
+
+    unsafe fn record_ahead(&mut self, plan: &BlendPlan, ahead: Ahead<'_>, spent: u32) -> Result<(), String> {
+        unsafe {
+            let Some((slot, new)) = plan.ahead else {
+                return Ok(());
+            };
+            if spent > 0 {
+                return Ok(());
+            }
+            let params = MemcParams { level: self.motion.level };
+            let version = |smooth: &Smooth, index: usize| smooth.slots[index].as_ref().map(|slot| slot.version);
+            let pending = {
+                let smooth = self.smooth.as_ref().ok_or("no smooth state")?;
+                match (new, version(smooth, plan.to_slot), version(smooth, slot), smooth.motion.as_ref()) {
+                    (false, Some(to), Some(next), Some(motion)) => motion.remaining(to, next),
+                    _ => 2,
+                }
+            };
+            let remaining = pending + new as u32;
+            if remaining == 0 {
+                return Ok(());
+            }
+            let mut budget = remaining.div_ceil(ahead.frames_left.max(1));
+            if new {
+                if self.free_lane().is_none() {
+                    return Ok(());
+                }
+                self.render_slot(ahead.frame, slot)?;
+                budget -= 1;
+            }
+            if budget == 0 {
+                return Ok(());
+            }
+            let core = self.core.as_ref().ok_or("no device")?;
+            let smooth = self.smooth.as_mut().ok_or("no smooth state")?;
+            let frame = |slot: &Option<Slot>| slot.as_ref().map(|slot| MotionFrame { view: slot.rt.view, version: slot.version });
+            let (Some(b), Some(c), Some(a)) = (frame(&smooth.slots[plan.to_slot]), frame(&smooth.slots[slot]), frame(&smooth.slots[plan.from_slot]))
+            else {
+                return Ok(());
+            };
+            let ctx = smooth.ctx(core);
+            let motion = smooth.motion.as_mut().ok_or("motion state is missing")?;
+            motion.advance(&ctx, b, c, (a.version, b.version), params, budget)?;
             Ok(())
         }
     }
 
-    unsafe fn record_blend(&mut self, from: &VideoFrame, to: &VideoFrame, weight: f32, plan: &BlendPlan, delay_us: i64) -> Result<bool, String> {
+    unsafe fn record_blend(
+        &mut self,
+        from: &VideoFrame,
+        to: &VideoFrame,
+        weight: f32,
+        plan: &BlendPlan,
+        delay_us: i64,
+        ahead: Option<Ahead<'_>>,
+    ) -> Result<bool, String> {
         unsafe {
             let Some(index) = self.acquire_frame()? else {
                 return Ok(false);
             };
+            self.reset_lanes();
             if plan.to_new {
                 self.render_slot(to, plan.to_slot)?;
             }
             if plan.from_new {
                 self.render_slot(from, plan.from_slot)?;
             }
-            if plan.motion {
-                self.record_motion_pass(index, to, plan, weight)?;
+            let spent = if plan.motion {
+                self.record_motion_pass(index, to, plan, weight)?
             } else {
                 self.record_blend_pass(index, plan, weight)?;
+                0
+            };
+            if let Some(ahead) = ahead {
+                self.record_ahead(plan, ahead, spent)?;
             }
             if delay_us > 0 && self.core.as_ref().is_some_and(|core| core.display_timing) {
                 self.target_ns = Some(monotonic_ns() + delay_us * 1_000);
@@ -784,21 +944,21 @@ impl VulkanPresenter {
         }
     }
 
-    pub fn present_blend(&mut self, from: &VideoFrame, to: &VideoFrame, weight: f32, delay_us: i64) -> bool {
+    pub fn present_blend(&mut self, from: &VideoFrame, to: &VideoFrame, weight: f32, delay_us: i64, ahead: Option<Ahead<'_>>) -> bool {
         if self.failed || self.target.is_none() {
             return false;
         }
         if self.smooth_failed {
             return self.present_paced(if weight >= 0.5 { to } else { from }, delay_us);
         }
-        let plan = match unsafe { self.plan_blend(from, to, weight) } {
+        let plan = match unsafe { self.plan_blend(from, to, weight, ahead.map(|ahead| ahead.frame)) } {
             Ok(plan) => plan,
             Err(error) => {
                 self.mark_smooth_failed(&error);
                 return self.present_paced(if weight >= 0.5 { to } else { from }, delay_us);
             }
         };
-        match unsafe { self.record_blend(from, to, weight, &plan, delay_us) } {
+        match unsafe { self.record_blend(from, to, weight, &plan, delay_us, ahead) } {
             Ok(drawn) => drawn,
             Err(error) => {
                 log::error!("Vulkan rendering failed: {error}");
@@ -865,6 +1025,7 @@ impl VulkanPresenter {
             }
             self.ensure_motion(true)?;
             self.begin_recording()?;
+            self.reset_lanes();
             if to_new {
                 self.render_slot(to, to_slot)?;
             }

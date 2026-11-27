@@ -126,14 +126,12 @@ object LuckyEngine {
     internal fun setMotion(
         handle: Long,
         level: Int,
-        protection: Int,
-        scene: Int,
         target: Int,
         fps: Int,
         anime: Boolean,
         lowFpsOnly: Boolean,
         learned: Int
-    ) = nativePlayerSetMotion(handle, level, protection, scene, target, fps, anime, lowFpsOnly, learned)
+    ) = nativePlayerSetMotion(handle, level, target, fps, anime, lowFpsOnly, learned)
 
     internal fun setPerformance(handle: Long, autoQuality: Boolean, fastDecode: Boolean, softwareFallback: Boolean, learnedCost: Float) =
         nativePlayerSetPerformance(handle, autoQuality, fastDecode, softwareFallback, learnedCost)
@@ -276,8 +274,6 @@ object LuckyEngine {
     private external fun nativePlayerSetMotion(
         handle: Long,
         level: Int,
-        protection: Int,
-        scene: Int,
         target: Int,
         fps: Int,
         anime: Boolean,

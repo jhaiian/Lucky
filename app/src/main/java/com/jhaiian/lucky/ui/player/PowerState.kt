@@ -84,8 +84,6 @@ internal fun effectiveMotion(mode: SmoothMotion, config: PlayerConfig, power: Po
         quality = quality,
         target = config.motionTarget,
         targetFps = config.motionTargetFps,
-        protection = config.motionProtection,
-        scene = config.motionScene,
         anime = config.motionAnime,
         lowFrameRateOnly = config.motionLowFpsOnly,
         learned = learned

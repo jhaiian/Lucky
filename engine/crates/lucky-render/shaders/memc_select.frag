@@ -62,7 +62,7 @@ void candidate(vec2 v, float bias) {
 }
 
 void main() {
-    vec2 p = gl_FragCoord.xy / pc.flow_scale;
+    vec2 p = (gl_FragCoord.xy) / pc.flow_scale;
     float t = pc.t;
     g_cell = 1.0 / min(pc.flow_scale.x, pc.flow_scale.y);
     g_p = p;
@@ -111,5 +111,5 @@ void main() {
         candidate(-vec2(bwd(p + vec2(0.0, d)).xy) * 0.25, 0.02);
         candidate(-vec2(bwd(p - vec2(0.0, d)).xy) * 0.25, 0.02);
     }
-    o_pick = ivec4(ivec2(round(g_best * 4.0)), int(g_okA * 1000.0 + 0.5) + int(g_okB * 1000.0 + 0.5) * 1024, int(min(g_err, 7.0) * 4096.0 + 0.5));
+    o_pick = ivec4(ivec2(round(g_best * 4.0)), int(g_okA * 127.0 + 0.5) + int(g_okB * 127.0 + 0.5) * 128, int(min(g_err, 7.0) * 4096.0 + 0.5));
 }

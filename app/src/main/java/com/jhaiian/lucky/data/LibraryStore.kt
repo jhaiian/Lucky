@@ -199,6 +199,23 @@ object LibraryStore {
         }
     }
 
+    fun removeVideo(context: Context, uri: String) {
+        val appContext = context.applicationContext
+        val updated = videos.filterNot { it.uri == uri }
+        if (updated.size == videos.size) return
+        videos = updated
+        if (updated.isEmpty()) scanState = LibraryScanState.EMPTY
+        scope.launch(Dispatchers.IO) { writeCache(appContext, updated) }
+    }
+
+    fun replaceVideo(context: Context, oldUri: String, replacement: VideoItem) {
+        val appContext = context.applicationContext
+        if (videos.none { it.uri == oldUri }) return
+        val updated = videos.map { if (it.uri == oldUri) replacement else it }
+        videos = updated
+        scope.launch(Dispatchers.IO) { writeCache(appContext, updated) }
+    }
+
     private fun cacheFile(context: Context) = File(context.filesDir, CACHE_FILE)
 
     private fun readCache(context: Context): List<VideoItem> = runCatching {

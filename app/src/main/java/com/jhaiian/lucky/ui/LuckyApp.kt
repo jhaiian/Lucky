@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.windowInsetsPadding
@@ -64,6 +65,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.jhaiian.lucky.R
+import com.jhaiian.lucky.data.ExternalRequest
+import com.jhaiian.lucky.data.ExternalVideo
 import com.jhaiian.lucky.data.PlayQueue
 import com.jhaiian.lucky.ui.components.LocalBottomContentPadding
 import com.jhaiian.lucky.ui.components.drillTransition
@@ -73,10 +76,12 @@ import com.jhaiian.lucky.ui.library.FolderPickerSheet
 import com.jhaiian.lucky.ui.library.LibraryCategory
 import com.jhaiian.lucky.ui.library.LibraryRoute
 import com.jhaiian.lucky.ui.library.LibraryScreen
+import com.jhaiian.lucky.ui.player.MiniPlayerBar
 import com.jhaiian.lucky.ui.player.PlayerScreen
 import com.jhaiian.lucky.ui.search.SearchScreen
 import com.jhaiian.lucky.ui.settings.SettingsPage
 import com.jhaiian.lucky.ui.settings.SettingsPageScreen
+import com.jhaiian.lucky.ui.settings.settingsDepth
 import com.jhaiian.lucky.ui.settings.SettingsScreen
 import com.jhaiian.lucky.ui.theme.LocalLuckyColors
 import com.jhaiian.lucky.update.UpdateChecker
@@ -88,18 +93,27 @@ private enum class AppTab(val labelRes: Int, val icon: ImageVector, val selected
     SETTINGS(R.string.nav_settings, Icons.Outlined.Settings, Icons.Rounded.Settings)
 }
 
-private data class PlayRequest(val uri: String, val title: String?)
+private data class PlayRequest(val uri: String, val title: String?, val external: Boolean = false, val transient: Boolean = false)
 
 private val PlayRequestSaver: Saver<PlayRequest?, String> = Saver(
-    save = { request -> request?.let { "${it.uri}\u001F${it.title.orEmpty()}" } },
+    save = { request ->
+        request?.let {
+            listOf(it.uri, it.title.orEmpty(), if (it.external) "1" else "0", if (it.transient) "1" else "0").joinToString("\u001F")
+        }
+    },
     restore = { saved ->
-        val parts = saved.split('\u001F', limit = 2)
-        PlayRequest(parts[0], parts.getOrNull(1)?.ifEmpty { null })
+        val parts = saved.split('\u001F', limit = 4)
+        PlayRequest(
+            uri = parts[0],
+            title = parts.getOrNull(1)?.ifEmpty { null },
+            external = parts.getOrNull(2) == "1",
+            transient = parts.getOrNull(3) == "1"
+        )
     }
 )
 
 @Composable
-fun LuckyApp() {
+fun LuckyApp(external: ExternalRequest? = null, onExternalHandled: (Long) -> Unit = {}) {
     val colors = LocalLuckyColors.current
     val context = LocalContext.current
     val haptics = rememberHaptics()
@@ -109,6 +123,7 @@ fun LuckyApp() {
     var showFolderPicker by rememberSaveable { mutableStateOf(false) }
     var playRequest by rememberSaveable(stateSaver = PlayRequestSaver) { mutableStateOf<PlayRequest?>(null) }
     var navVisible by remember { mutableStateOf(true) }
+    var playerMinimized by rememberSaveable { mutableStateOf(false) }
     val settingsPage = settingsPageName?.let { name -> SettingsPage.entries.firstOrNull { it.name == name } }
     val stateHolder = rememberSaveableStateHolder()
 
@@ -122,8 +137,19 @@ fun LuckyApp() {
     }
     LaunchedEffect(tab, libraryRoute, settingsPageName) { navVisible = true }
     LaunchedEffect(Unit) { UpdateChecker.checkOnLaunch(context) }
+    LaunchedEffect(external?.id) {
+        val incoming = external ?: return@LaunchedEffect
+        val resolved = ExternalVideo.resolve(context, incoming.uri)
+        PlayQueue.set(resolved.queue)
+        playerMinimized = false
+        playRequest = PlayRequest(resolved.uri, resolved.title, external = true, transient = resolved.transient)
+        onExternalHandled(incoming.id)
+    }
 
-    val play: (String, String?) -> Unit = { uri, title -> playRequest = PlayRequest(uri, title) }
+    val play: (String, String?) -> Unit = { uri, title ->
+        playerMinimized = false
+        playRequest = PlayRequest(uri, title)
+    }
     val manageFolders: () -> Unit = { showFolderPicker = true }
     val selectTab: (AppTab) -> Unit = { target ->
         haptics.tick()
@@ -146,7 +172,9 @@ fun LuckyApp() {
     ) {
         val useRail = maxWidth >= 600.dp
         val navInsetBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
-        val bottomPadding = if (useRail) navInsetBottom else navInsetBottom + 80.dp
+        val navPadding = if (useRail) navInsetBottom else navInsetBottom + 80.dp
+        val miniShown = playRequest != null && playerMinimized
+        val bottomPadding = if (miniShown) navPadding + 80.dp else navPadding
         val sideInsets = WindowInsets.navigationBars.union(WindowInsets.displayCutout)
 
         Row(Modifier.fillMaxSize()) {
@@ -216,6 +244,23 @@ fun LuckyApp() {
                     }
                 }
                 StatusBarScrim()
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = miniShown,
+                    enter = slideInVertically(tween(260, easing = FastOutSlowInEasing)) { it } + fadeIn(tween(200)),
+                    exit = slideOutVertically(tween(220, easing = FastOutSlowInEasing)) { it } + fadeOut(tween(160)),
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(start = 12.dp, end = 12.dp, bottom = (if (navVisible || useRail) navPadding else navInsetBottom) + 8.dp)
+                ) {
+                    MiniPlayerBar(
+                        fallbackTitle = playRequest?.title,
+                        onExpand = { playerMinimized = false },
+                        onClose = {
+                            playerMinimized = false
+                            playRequest = null
+                        }
+                    )
+                }
                 Box(
                     Modifier
                         .align(Alignment.BottomCenter)
@@ -276,8 +321,17 @@ fun LuckyApp() {
             PlayerScreen(
                 uri = uri,
                 title = request.title,
-                onClose = { playRequest = null },
-                onOpen = { nextUri, nextTitle -> playRequest = PlayRequest(nextUri, nextTitle) }
+                recordHistory = !request.transient,
+                minimized = playerMinimized,
+                onMinimize = if (request.external) null else ({ playerMinimized = true }),
+                onClose = {
+                    playerMinimized = false
+                    playRequest = null
+                    if (request.external) context.findActivity()?.moveTaskToBack(true)
+                },
+                onOpen = { nextUri, nextTitle ->
+                    playRequest = PlayRequest(nextUri, nextTitle, external = request.external)
+                }
             )
         }
     }
@@ -290,10 +344,10 @@ private fun SettingsHost(
     onManageFolders: () -> Unit
 ) {
     val colors = LocalLuckyColors.current
-    BackHandler(enabled = page != null) { onPageChange(null) }
+    BackHandler(enabled = page != null) { onPageChange(page?.parent) }
     AnimatedContent(
         targetState = page,
-        transitionSpec = { drillTransition(targetState != null) },
+        transitionSpec = { drillTransition(settingsDepth(targetState) > settingsDepth(initialState)) },
         modifier = Modifier
             .fillMaxSize()
             .background(colors.background),
@@ -302,7 +356,12 @@ private fun SettingsHost(
         if (current == null) {
             SettingsScreen(onOpenPage = { onPageChange(it) })
         } else {
-            SettingsPageScreen(page = current, onBack = { onPageChange(null) }, onManageFolders = onManageFolders)
+            SettingsPageScreen(
+                page = current,
+                onBack = { onPageChange(current.parent) },
+                onOpenPage = { onPageChange(it) },
+                onManageFolders = onManageFolders
+            )
         }
     }
 }

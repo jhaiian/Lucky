@@ -30,7 +30,7 @@ pub use passthrough::EncodedCodec;
 pub use backend::{BackendOutput, HardwareDecoderFactory, SoftwareBackend, VideoBackend, VideoStreamInfo};
 pub use frame::{ColorInfo, DoviConfig, FrameData, HardwareFrame, VideoFrame, hdr10_plus_nits, hevc_hdr10_plus_nits, light_level, mastering_peak};
 pub use render::{
-    ActiveScaling, DisplayLuminance, DisplayOptions, DownscalerMode, FitMode, MotionConfig, MotionSettings, Presenter, RenderCommand, ScalerMode,
+    ActiveScaling, Ahead, DisplayLuminance, DisplayOptions, DownscalerMode, FitMode, MotionConfig, MotionSettings, Presenter, RenderCommand, ScalerMode,
     ViewTransform,
 };
 pub use lucky_ass::{RenderOutcome, Rendered, SubtitleStyle};

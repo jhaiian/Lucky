@@ -23,11 +23,13 @@ Ang Lucky ay open-source na video player para sa mga video na nasa phone mo na. 
 <b>Player</b>
 • Mag-swipe para sa brightness, volume at seek, mag-double tap para lumaktaw, mag-pinch para mag-zoom, at pindutin nang matagal para bumilis
 • Picture-in-picture, chapters, A–B repeat, sleep timer at frame-by-frame
+• Pag-play sa background na may mini-player, Audio only mode, volume boost hanggang 300%, at mga button para i-skip ang intro at credits
 • Tanggalin ang black bars, i-crop, i-zoom, i-mirror o i-rotate ang video, at mag-screenshot
 
 <b>Library at itsura</b>
 • Kusang hinahanap ang mga video mo, o sa mga folder lang na pipiliin mo
 • Continue watching, recently added, folders, history at search
+• Magbukas ng video mula sa ibang app, at pindutin nang matagal ang kahit anong video para i-share, i-rename, i-delete, o makita ang details nito
 • Light at dark na tema, accent color at Material You
 • Adaptive layout para sa phone, tablet, foldable at malalapad na screen
 

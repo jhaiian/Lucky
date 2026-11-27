@@ -1,0 +1,8 @@
+• Reproducción en segundo plano, con minirreproductor
+• Abre videos de otras apps con Lucky
+• Mantén presionado un video para compartirlo, renombrarlo, borrarlo o ver sus detalles
+• Nuevo diseño del reproductor, con vista previa en vivo
+• Volumen amplificado hasta 300 % y modo Solo audio
+• Botones para saltar la intro, el resumen y los créditos
+• Los episodios de una serie recuerdan tu audio, subtítulos y zoom
+• Interpolación de movimiento más fluida y limpia

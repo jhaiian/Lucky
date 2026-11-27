@@ -2,7 +2,7 @@ use ash::vk;
 
 use super::smooth::{Ctx, Draw, Rt, bytes_of, fullscreen_pipeline, offscreen_pass, record_draw};
 use super::{Core, color_range, find_memory, spirv};
-use crate::memc::{MemcParams, PYRAMIDS, Quality, READBACKS, blocks, cut_threshold, grid, level_count, level_for, level_size, protection, quality};
+use crate::memc::{MemcParams, PYRAMIDS, Quality, READBACKS, blocks, grid, level_count, level_for, level_size, quality, search_range};
 
 const DOWN_FRAG: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/memc_down.frag.spv"));
 const SEARCH_FRAG: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/memc_search.frag.spv"));
@@ -11,6 +11,9 @@ const DENSE_FRAG: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/memc_dense.f
 const TILES_FRAG: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/memc_tiles.frag.spv"));
 const STATS_FRAG: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/memc_stats.frag.spv"));
 const SELECT_FRAG: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/memc_select.frag.spv"));
+const SETTLE_FRAG: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/memc_settle.frag.spv"));
+const MASK_FRAG: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/memc_mask.frag.spv"));
+const SOFTEN_FRAG: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/memc_soften.frag.spv"));
 const RENDER_FRAG: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/memc_render.frag.spv"));
 
 #[repr(C)]
@@ -61,8 +64,8 @@ struct TilesPush {
 struct StatsPush {
     tiles_size: [i32; 2],
     field_size: [i32; 2],
-    cut: [f32; 2],
     has_field: i32,
+    has_previous: i32,
 }
 
 #[repr(C)]
@@ -79,18 +82,31 @@ struct SelectPush {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
+struct SizePush {
+    size: [i32; 2],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct SoftenPush {
+    inv: [f32; 2],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
 pub(super) struct RenderPush {
     rect: [f32; 4],
-    protect: [f32; 4],
     flow_size: [i32; 2],
     flow_scale: [f32; 2],
     inv: [f32; 2],
+    unit: [f32; 2],
     t: f32,
+    dither: f32,
 }
 
 impl RenderPush {
     pub(super) fn set_dither(&mut self, levels: f32) {
-        self.protect[3] = levels;
+        self.dither = levels;
     }
 }
 
@@ -98,6 +114,7 @@ pub(super) struct RenderDraw {
     pub(super) set: vk::DescriptorSet,
     pub(super) layout: vk::PipelineLayout,
     pub(super) push: RenderPush,
+    pub(super) stages: u32,
 }
 
 #[derive(Clone, Copy)]
@@ -174,7 +191,6 @@ struct Direction {
     fields: Vec<Option<Rt>>,
     base: [Option<Rt>; 3],
     last: Option<usize>,
-    dense: Option<Rt>,
 }
 
 impl Direction {
@@ -186,10 +202,41 @@ impl Direction {
             for target in self.base.iter_mut().filter_map(|t| t.take()) {
                 target.destroy(core);
             }
-            if let Some(dense) = self.dense.take() {
-                dense.destroy(core);
-            }
             self.last = None;
+        }
+    }
+}
+
+#[derive(Default)]
+struct PairWork {
+    key: Option<(u64, u64)>,
+    stage: u8,
+    dense: [Option<Rt>; 2],
+    stats: Option<Rt>,
+}
+
+impl PairWork {
+    fn restart(&mut self, key: (u64, u64)) {
+        self.key = Some(key);
+        self.stage = 0;
+    }
+
+    unsafe fn release_dense(&mut self, core: &Core) {
+        unsafe {
+            for target in self.dense.iter_mut().filter_map(|t| t.take()) {
+                target.destroy(core);
+            }
+            self.key = None;
+            self.stage = 0;
+        }
+    }
+
+    unsafe fn release(&mut self, core: &Core) {
+        unsafe {
+            self.release_dense(core);
+            if let Some(stats) = self.stats.take() {
+                stats.destroy(core);
+            }
         }
     }
 }
@@ -287,7 +334,6 @@ unsafe fn run(
 pub(super) struct Motion {
     pass_r8: vk::RenderPass,
     pass_field: vk::RenderPass,
-    pass_pick: vk::RenderPass,
     pass_rgba8: vk::RenderPass,
     down: Program,
     search: Program,
@@ -296,6 +342,9 @@ pub(super) struct Motion {
     tiles: Program,
     stats: Program,
     select: Program,
+    settle: Program,
+    mask: Program,
+    soften: Program,
     render: Program,
     dummy: Option<Rt>,
     dummy_ready: bool,
@@ -307,9 +356,10 @@ pub(super) struct Motion {
     flow: [Direction; 2],
     tile_level: usize,
     pair_tiles: Option<Rt>,
-    pick: Option<Rt>,
-    pair: Option<(u64, u64, u8)>,
-    stats_target: Option<Rt>,
+    picks: [Option<Rt>; 2],
+    masks: [Option<Rt>; 2],
+    works: [PairWork; 2],
+    current: usize,
     check_tiles: Option<Rt>,
     check_target: Option<Rt>,
     readbacks: Vec<Readback>,
@@ -323,7 +373,6 @@ impl Motion {
             let mut motion = Motion {
                 pass_r8: vk::RenderPass::null(),
                 pass_field: vk::RenderPass::null(),
-                pass_pick: vk::RenderPass::null(),
                 pass_rgba8: vk::RenderPass::null(),
                 down: Program::empty(),
                 search: Program::empty(),
@@ -332,6 +381,9 @@ impl Motion {
                 tiles: Program::empty(),
                 stats: Program::empty(),
                 select: Program::empty(),
+                settle: Program::empty(),
+                mask: Program::empty(),
+                soften: Program::empty(),
                 render: Program::empty(),
                 dummy: None,
                 dummy_ready: false,
@@ -343,9 +395,10 @@ impl Motion {
                 flow: [Direction::default(), Direction::default()],
                 tile_level: 0,
                 pair_tiles: None,
-                pick: None,
-                pair: None,
-                stats_target: None,
+                picks: [None, None],
+                masks: [None, None],
+                works: [PairWork::default(), PairWork::default()],
+                current: 0,
                 check_tiles: None,
                 check_target: None,
                 readbacks: Vec::new(),
@@ -365,7 +418,6 @@ impl Motion {
             let pass = |format: vk::Format| offscreen_pass(core, format).map_err(|e| format!("motion render pass: {e}"));
             self.pass_r8 = pass(vk::Format::R8_UNORM)?;
             self.pass_field = pass(vk::Format::R16G16B16A16_SINT)?;
-            self.pass_pick = pass(vk::Format::R32G32B32A32_SINT)?;
             self.pass_rgba8 = pass(vk::Format::R8G8B8A8_UNORM)?;
             self.down.build(core, vertex, DOWN_FRAG, set_layout, std::mem::size_of::<DownPush>(), Some(self.pass_r8))?;
             self.search.build(core, vertex, SEARCH_FRAG, set_layout, std::mem::size_of::<SearchPush>(), Some(self.pass_field))?;
@@ -373,7 +425,10 @@ impl Motion {
             self.dense.build(core, vertex, DENSE_FRAG, set_layout, std::mem::size_of::<DensePush>(), Some(self.pass_field))?;
             self.tiles.build(core, vertex, TILES_FRAG, set_layout, std::mem::size_of::<TilesPush>(), Some(self.pass_rgba8))?;
             self.stats.build(core, vertex, STATS_FRAG, set_layout, std::mem::size_of::<StatsPush>(), Some(self.pass_rgba8))?;
-            self.select.build(core, vertex, SELECT_FRAG, set_layout, std::mem::size_of::<SelectPush>(), Some(self.pass_pick))?;
+            self.select.build(core, vertex, SELECT_FRAG, set_layout, std::mem::size_of::<SelectPush>(), Some(self.pass_field))?;
+            self.settle.build(core, vertex, SETTLE_FRAG, set_layout, std::mem::size_of::<SizePush>(), Some(self.pass_field))?;
+            self.mask.build(core, vertex, MASK_FRAG, set_layout, std::mem::size_of::<SizePush>(), Some(self.pass_r8))?;
+            self.soften.build(core, vertex, SOFTEN_FRAG, set_layout, std::mem::size_of::<SoftenPush>(), Some(self.pass_r8))?;
             self.render.build(core, vertex, RENDER_FRAG, set_layout, std::mem::size_of::<RenderPush>(), None)?;
             self.dummy = Some(Rt::new(core, self.pass_field, vk::Format::R16G16B16A16_SINT, 1, 1, vk::ImageUsageFlags::empty())?);
             for _ in 0..READBACKS {
@@ -392,6 +447,14 @@ impl Motion {
         self.render.module
     }
 
+    unsafe fn release_picks(&mut self, core: &Core) {
+        unsafe {
+            for target in self.picks.iter_mut().chain(self.masks.iter_mut()).filter_map(|t| t.take()) {
+                target.destroy(core);
+            }
+        }
+    }
+
     unsafe fn release_sized(&mut self, core: &Core) {
         unsafe {
             for pyramid in self.pyramids.drain(..) {
@@ -402,14 +465,14 @@ impl Motion {
             for direction in self.flow.iter_mut() {
                 direction.release(core);
             }
-            for target in [self.pick.take(), self.pair_tiles.take(), self.stats_target.take(), self.check_tiles.take(), self.check_target.take()]
-                .into_iter()
-                .flatten()
-            {
+            for work in self.works.iter_mut() {
+                work.release(core);
+            }
+            self.release_picks(core);
+            for target in [self.pair_tiles.take(), self.check_tiles.take(), self.check_target.take()].into_iter().flatten() {
                 target.destroy(core);
             }
             self.layout = None;
-            self.pair = None;
             self.size = (0, 0);
         }
     }
@@ -435,7 +498,10 @@ impl Motion {
             let none = vk::ImageUsageFlags::empty();
             self.pair_tiles = Some(Rt::new(core, self.pass_rgba8, vk::Format::R8G8B8A8_UNORM, tile_size.0, tile_size.1, none)?);
             self.check_tiles = Some(Rt::new(core, self.pass_rgba8, vk::Format::R8G8B8A8_UNORM, tile_size.0, tile_size.1, none)?);
-            self.stats_target = Some(Rt::new(core, self.pass_rgba8, vk::Format::R8G8B8A8_UNORM, 1, 1, none)?);
+            for index in 0..2 {
+                let stats = Rt::new(core, self.pass_rgba8, vk::Format::R8G8B8A8_UNORM, 1, 1, none)?;
+                self.works[index].stats = Some(stats);
+            }
             self.check_target =
                 Some(Rt::new(core, self.pass_rgba8, vk::Format::R8G8B8A8_UNORM, 1, 1, vk::ImageUsageFlags::TRANSFER_SRC)?);
             self.size = (width, height);
@@ -451,10 +517,10 @@ impl Motion {
             for direction in self.flow.iter_mut() {
                 direction.release(core);
             }
-            if let Some(pick) = self.pick.take() {
-                pick.destroy(core);
+            for work in self.works.iter_mut() {
+                work.release_dense(core);
             }
-            self.pair = None;
+            self.release_picks(core);
             let size = self.size;
             let none = vk::ImageUsageFlags::empty();
             for side in 0..2 {
@@ -469,11 +535,19 @@ impl Motion {
                     let target = Rt::new(core, self.pass_field, vk::Format::R16G16B16A16_SINT, cells.0, cells.1, none)?;
                     self.flow[side].base[slot] = Some(target);
                 }
-                let flow = level_size(size.0, size.1, base);
-                self.flow[side].dense = Some(Rt::new(core, self.pass_field, vk::Format::R16G16B16A16_SINT, flow.0, flow.1, none)?);
             }
             let flow = level_size(size.0, size.1, base);
-            self.pick = Some(Rt::new(core, self.pass_pick, vk::Format::R32G32B32A32_SINT, flow.0, flow.1, none)?);
+            for index in 0..2 {
+                for side in 0..2 {
+                    let target = Rt::new(core, self.pass_field, vk::Format::R16G16B16A16_SINT, flow.0, flow.1, none)?;
+                    self.works[index].dense[side] = Some(target);
+                }
+            }
+            for index in 0..2 {
+                self.picks[index] = Some(Rt::new(core, self.pass_field, vk::Format::R16G16B16A16_SINT, flow.0, flow.1, none)?);
+            }
+            self.masks[0] = Some(Rt::new(core, self.pass_r8, vk::Format::R8_UNORM, flow.0, flow.1, none)?);
+            self.masks[1] = Some(Rt::new(core, self.pass_rgba8, vk::Format::R8G8B8A8_UNORM, flow.0, flow.1, none)?);
             self.layout = Some((base, q));
             Ok(())
         }
@@ -553,18 +627,31 @@ impl Motion {
         }
     }
 
-    unsafe fn draw_stats(&self, ctx: &Ctx, tiles: &Rt, field: Option<&Rt>, cut: [f32; 2], target: &Rt) -> Result<(), String> {
+    unsafe fn draw_stats(&self, ctx: &Ctx, tiles: &Rt, field: Option<&Rt>, previous: Option<&Rt>, target: &Rt) -> Result<(), String> {
         unsafe {
             let dummy = self.dummy.as_ref().ok_or("motion placeholder is missing")?;
             let (field_view, field_size, has_field) = match field {
                 Some(field) => (field.view, [field.width, field.height], 1),
                 None => (dummy.view, [1, 1], 0),
             };
-            let push = StatsPush { tiles_size: [tiles.width, tiles.height], field_size, cut, has_field };
-            run(ctx, &self.stats, self.pass_rgba8, clear_float(), target, &[(tiles.view, false), (field_view, false)], bytes_of(&push))
+            let (previous_view, has_previous) = match previous.filter(|_| field.is_some()) {
+                Some(previous) => (previous.view, 1),
+                None => (dummy.view, 0),
+            };
+            let push = StatsPush { tiles_size: [tiles.width, tiles.height], field_size, has_field, has_previous };
+            run(
+                ctx,
+                &self.stats,
+                self.pass_rgba8,
+                clear_float(),
+                target,
+                &[(tiles.view, false), (field_view, false), (previous_view, false)],
+                bytes_of(&push),
+            )
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     unsafe fn estimate(
         &mut self,
         ctx: &Ctx,
@@ -573,6 +660,7 @@ impl Motion {
         target: usize,
         base: usize,
         q: Quality,
+        work: usize,
     ) -> Result<Option<usize>, String> {
         unsafe {
             let size = self.size;
@@ -610,7 +698,7 @@ impl Motion {
                     grid_step: q.step as f32,
                     mode: if coarsest { 0 } else { 1 },
                     has_temporal,
-                    search: 8,
+                    search: search_range(coarsest, level > base, x.width, x.height),
                     stages: q.stages,
                 };
                 run(
@@ -660,7 +748,7 @@ impl Motion {
             };
             let push = MedianPush { size: [source.width, source.height] };
             run(ctx, &self.median, self.pass_field, clear_int(), destination, &[(source.view, false)], bytes_of(&push))?;
-            let (Some(cells), Some(dense)) = (direction.base[finished].as_ref(), direction.dense.as_ref()) else {
+            let (Some(cells), Some(dense)) = (direction.base[finished].as_ref(), self.works[work].dense[side].as_ref()) else {
                 return Ok(None);
             };
             let push = DensePush {
@@ -683,6 +771,85 @@ impl Motion {
         }
     }
 
+    unsafe fn run_stages(&mut self, ctx: &Ctx, work: usize, a: MotionFrame, b: MotionFrame, budget: u32) -> Result<u32, String> {
+        unsafe {
+            let Some((base, q)) = self.layout else {
+                return Err("motion layout is not ready".into());
+            };
+            let mut ran = 0;
+            while ran < budget && self.works[work].stage < 2 {
+                let pa = self.pyramid(ctx, a)?;
+                let pb = self.pyramid(ctx, b)?;
+                if pa == pb {
+                    return Err("motion frames share a pyramid".into());
+                }
+                if self.works[work].stage == 0 {
+                    if let Some(tiles) = self.pair_tiles.as_ref() {
+                        self.draw_tiles(ctx, pa, pb, tiles)?;
+                    }
+                    let earlier = self.flow[0].last;
+                    let forward = self.estimate(ctx, 0, pa, pb, base, q, work)?.ok_or("motion fields are missing")?;
+                    let field = self.flow[0].base[forward].as_ref();
+                    let previous = earlier.and_then(|i| self.flow[0].base[i].as_ref());
+                    if let (Some(tiles), Some(stats)) = (self.pair_tiles.as_ref(), self.works[work].stats.as_ref()) {
+                        self.draw_stats(ctx, tiles, field, previous, stats)?;
+                    }
+                } else {
+                    self.estimate(ctx, 1, pb, pa, base, q, work)?.ok_or("motion fields are missing")?;
+                }
+                self.works[work].stage += 1;
+                ran += 1;
+            }
+            Ok(ran)
+        }
+    }
+
+    fn ready(&self, size: (i32, i32), level: u8) -> bool {
+        if self.size != size || self.pyramids.is_empty() {
+            return false;
+        }
+        let q = quality(level);
+        self.layout == Some((level_for(size.0, size.1, q.limit, self.levels), q))
+    }
+
+    pub(super) fn remaining(&self, a: u64, b: u64) -> u32 {
+        let key = Some((a, b));
+        self.works.iter().find(|work| work.key == key).map_or(2, |work| 2 - work.stage.min(2) as u32)
+    }
+
+    pub(super) unsafe fn advance(
+        &mut self,
+        ctx: &Ctx,
+        a: MotionFrame,
+        b: MotionFrame,
+        shown: (u64, u64),
+        params: MemcParams,
+        budget: u32,
+    ) -> Result<u32, String> {
+        unsafe {
+            if budget == 0 || !self.ready(self.size, params.level) {
+                return Ok(0);
+            }
+            self.init_dummy(ctx)?;
+            let key = (a.version, b.version);
+            let shown = Some(shown);
+            if shown == Some(key) {
+                return Ok(0);
+            }
+            let work = match self.works.iter().position(|work| work.key == Some(key)) {
+                Some(index) => index,
+                None => {
+                    let other = 1 - self.current;
+                    let index = if self.works[other].key == shown { self.current } else { other };
+                    self.works[index].restart(key);
+                    index
+                }
+            };
+            self.run_stages(ctx, work, a, b, budget)
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub(super) unsafe fn record(
         &mut self,
         ctx: &Ctx,
@@ -692,44 +859,35 @@ impl Motion {
         rect: [f32; 4],
         t: f32,
         params: MemcParams,
+        out: (i32, i32),
     ) -> Result<RenderDraw, String> {
         unsafe {
             self.init_dummy(ctx)?;
             let q = quality(params.level);
-            if self.size != size || self.pyramids.is_empty() {
+            if !self.ready(size, params.level) {
                 return Err("motion targets are not ready".into());
             }
-            let base = level_for(size.0, size.1, q.limit, self.levels);
-            if self.layout != Some((base, q)) {
-                return Err("motion layout is not ready".into());
-            }
+            let key = (a.version, b.version);
+            let work = match self.works.iter().position(|work| work.key == Some(key)) {
+                Some(index) => index,
+                None => {
+                    let index = self.current;
+                    self.works[index].restart(key);
+                    index
+                }
+            };
+            self.current = work;
+            let stages = self.run_stages(ctx, work, a, b, 2)?;
             let pa = self.pyramid(ctx, a)?;
             let pb = self.pyramid(ctx, b)?;
             if pa == pb {
                 return Err("motion frames share a pyramid".into());
             }
-            let pair = (a.version, b.version, params.scene);
-            if self.pair != Some(pair) {
-                if let Some(tiles) = self.pair_tiles.as_ref() {
-                    self.draw_tiles(ctx, pa, pb, tiles)?;
-                }
-                let forward = self.estimate(ctx, 0, pa, pb, base, q)?;
-                let backward = self.estimate(ctx, 1, pb, pa, base, q)?;
-                if forward.is_none() || backward.is_none() {
-                    return Err("motion fields are missing".into());
-                }
-                let field = forward.and_then(|i| self.flow[0].base[i].as_ref());
-                if let (Some(tiles), Some(stats)) = (self.pair_tiles.as_ref(), self.stats_target.as_ref()) {
-                    self.draw_stats(ctx, tiles, field, cut_threshold(params.scene), stats)?;
-                }
-                self.pair = Some(pair);
-            }
-            let (Some(forward), Some(backward), Some(stats)) =
-                (self.flow[0].dense.as_ref(), self.flow[1].dense.as_ref(), self.stats_target.as_ref())
-            else {
+            let pair = &self.works[work];
+            let (Some(forward), Some(backward), Some(stats)) = (pair.dense[0].as_ref(), pair.dense[1].as_ref(), pair.stats.as_ref()) else {
                 return Err("motion flow is missing".into());
             };
-            let Some(pick) = self.pick.as_ref() else {
+            let (Some(pick), Some(settled), Some(risk), Some(soft)) = (self.picks[0].as_ref(), self.picks[1].as_ref(), self.masks[0].as_ref(), self.masks[1].as_ref()) else {
                 return Err("motion pick target is missing".into());
             };
             let t = t.clamp(0.0, 1.0);
@@ -747,7 +905,7 @@ impl Motion {
             run(
                 ctx,
                 &self.select,
-                self.pass_pick,
+                self.pass_field,
                 clear_int(),
                 pick,
                 &[
@@ -758,17 +916,23 @@ impl Motion {
                 ],
                 bytes_of(&select),
             )?;
-            let protect = protection(params.protection);
+            let size_push = SizePush { size: [pick.width, pick.height] };
+            run(ctx, &self.settle, self.pass_field, clear_int(), settled, &[(pick.view, false)], bytes_of(&size_push))?;
+            run(ctx, &self.mask, self.pass_r8, clear_float(), risk, &[(settled.view, false)], bytes_of(&size_push))?;
+            let soften = SoftenPush { inv: [1.0 / risk.width as f32, 1.0 / risk.height as f32] };
+            run(ctx, &self.soften, self.pass_rgba8, clear_float(), soft, &[(risk.view, true), (stats.view, false)], bytes_of(&soften))?;
+            let shrink = [out.0 as f32 / size.0 as f32, out.1 as f32 / size.1 as f32];
             let push = RenderPush {
-                rect,
-                protect: [protect[0], protect[1], protect[2], 0.0],
-                flow_size: [pick.width, pick.height],
-                flow_scale,
-                inv,
+                rect: [rect[0] * shrink[0], rect[1] * shrink[1], rect[2] * shrink[0], rect[3] * shrink[1]],
+                flow_size: [settled.width, settled.height],
+                flow_scale: [flow_scale[0] / shrink[0], flow_scale[1] / shrink[1]],
+                inv: [1.0 / out.0 as f32, 1.0 / out.1 as f32],
+                unit: [0.25 * shrink[0], 0.25 * shrink[1]],
                 t,
+                dither: 0.0,
             };
-            let set = ctx.bind(&[(a.view, true), (b.view, true), (pick.view, false), (stats.view, false)])?;
-            Ok(RenderDraw { set, layout: self.render.layout, push })
+            let set = ctx.bind(&[(a.view, true), (b.view, true), (settled.view, false), (soft.view, true)])?;
+            Ok(RenderDraw { set, layout: self.render.layout, push, stages })
         }
     }
 
@@ -788,7 +952,7 @@ impl Motion {
                 return Err("check targets are missing".into());
             };
             self.draw_tiles(ctx, pa, pb, tiles)?;
-            self.draw_stats(ctx, tiles, None, [1.0, 1.0], target)?;
+            self.draw_stats(ctx, tiles, None, None, target)?;
             let slot = self.next_readback;
             self.next_readback = (slot + 1) % READBACKS;
             let readback = &mut self.readbacks[slot];
@@ -870,7 +1034,10 @@ impl Motion {
         for direction in self.flow.iter_mut() {
             direction.last = None;
         }
-        self.pair = None;
+        for work in self.works.iter_mut() {
+            work.key = None;
+            work.stage = 0;
+        }
     }
 
     pub(super) unsafe fn destroy(&mut self, core: &Core) {
@@ -884,10 +1051,22 @@ impl Motion {
                 core.device.destroy_buffer(readback.buffer, None);
                 core.device.free_memory(readback.memory, None);
             }
-            for program in [&self.down, &self.search, &self.median, &self.dense, &self.tiles, &self.stats, &self.select, &self.render] {
+            for program in [
+                &self.down,
+                &self.search,
+                &self.median,
+                &self.dense,
+                &self.tiles,
+                &self.stats,
+                &self.select,
+                &self.settle,
+                &self.mask,
+                &self.soften,
+                &self.render,
+            ] {
                 program.destroy(core);
             }
-            for pass in [self.pass_r8, self.pass_field, self.pass_pick, self.pass_rgba8] {
+            for pass in [self.pass_r8, self.pass_field, self.pass_rgba8] {
                 core.device.destroy_render_pass(pass, None);
             }
         }
@@ -907,8 +1086,10 @@ mod tests {
         assert_eq!(size_of::<MedianPush>(), 8);
         assert_eq!(size_of::<DensePush>(), 28);
         assert_eq!(size_of::<TilesPush>(), 8);
-        assert_eq!(size_of::<StatsPush>(), 28);
+        assert_eq!(size_of::<StatsPush>(), 24);
         assert_eq!(size_of::<SelectPush>(), 52);
-        assert_eq!(size_of::<RenderPush>(), 60);
+        assert_eq!(size_of::<SizePush>(), 8);
+        assert_eq!(size_of::<SoftenPush>(), 8);
+        assert_eq!(size_of::<RenderPush>(), 56);
     }
 }

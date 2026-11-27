@@ -1,0 +1,8 @@
+• Putar di latar belakang, lengkap dengan mini-player
+• Buka video dari aplikasi lain dengan Lucky
+• Tekan lama video untuk membagikan, mengganti nama, menghapus, atau melihat detailnya
+• Tampilan pemutar baru, dengan halaman pratinjau langsung
+• Penguat volume hingga 300% dan mode Hanya audio
+• Tombol lewati intro, rekap, dan kredit
+• Episode dalam satu serial mengingat audio, subtitle, dan zoom Anda
+• Interpolasi gerak yang lebih mulus dan bersih

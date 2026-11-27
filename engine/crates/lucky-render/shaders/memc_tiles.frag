@@ -8,12 +8,12 @@ layout(push_constant) uniform Tiles {
 } pc;
 
 layout(location = 0) out vec4 o_tile;
-
 void main() {
     ivec2 base = ivec2(gl_FragCoord.xy) * 8;
     float peak = 0.0;
     float sum = 0.0;
-    float light = 0.0;
+    float lightA = 0.0;
+    float lightB = 0.0;
     float count = 0.0;
     for (int j = 0; j < 8; j++) {
         for (int i = 0; i < 8; i++) {
@@ -24,10 +24,11 @@ void main() {
                 float d = abs(a - b);
                 peak = max(peak, d);
                 sum += d;
-                light += a + b;
+                lightA += a;
+                lightB += b;
                 count += 1.0;
             }
         }
     }
-    o_tile = count > 0.0 ? vec4(peak, sum / count, light / (2.0 * count), 1.0) : vec4(0.0);
+    o_tile = count > 0.0 ? vec4(peak, sum / count, lightA / count, lightB / count) : vec4(0.0);
 }

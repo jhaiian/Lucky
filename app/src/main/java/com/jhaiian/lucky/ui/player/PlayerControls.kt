@@ -1,7 +1,8 @@
 package com.jhaiian.lucky.ui.player
 
 import android.graphics.Bitmap
-import androidx.compose.foundation.background
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -17,8 +18,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowLeft
@@ -26,24 +27,21 @@ import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.AspectRatio
 import androidx.compose.material.icons.rounded.Audiotrack
 import androidx.compose.material.icons.rounded.AutoAwesomeMotion
-import androidx.compose.material.icons.rounded.ClosedCaption
-import androidx.compose.material.icons.rounded.Battery5Bar
 import androidx.compose.material.icons.rounded.Bookmarks
+import androidx.compose.material.icons.rounded.ClosedCaption
 import androidx.compose.material.icons.rounded.FastForward
 import androidx.compose.material.icons.rounded.FastRewind
 import androidx.compose.material.icons.rounded.Flip
 import androidx.compose.material.icons.rounded.Forward10
 import androidx.compose.material.icons.rounded.Forward30
 import androidx.compose.material.icons.rounded.Forward5
+import androidx.compose.material.icons.rounded.Headphones
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.LockOpen
-import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PhotoCamera
 import androidx.compose.material.icons.rounded.PictureInPictureAlt
-import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Repeat
 import androidx.compose.material.icons.rounded.RepeatOne
-import androidx.compose.material.icons.rounded.Replay
 import androidx.compose.material.icons.rounded.Replay10
 import androidx.compose.material.icons.rounded.Replay30
 import androidx.compose.material.icons.rounded.Replay5
@@ -56,13 +54,14 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface as MaterialSurface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -71,36 +70,34 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.jhaiian.lucky.R
 import com.jhaiian.lucky.engine.AudioOutputKind
-import com.jhaiian.lucky.engine.PlaybackState
 import com.jhaiian.lucky.engine.DisplayOutput
-import com.jhaiian.lucky.engine.MotionQuality
-import com.jhaiian.lucky.engine.PlayerStatus
-import com.jhaiian.lucky.engine.ScaleFilter
-import com.jhaiian.lucky.engine.RendererPreference
 import com.jhaiian.lucky.engine.Downscaler
+import com.jhaiian.lucky.engine.MotionQuality
+import com.jhaiian.lucky.engine.PlaybackState
+import com.jhaiian.lucky.engine.PlayerStatus
+import com.jhaiian.lucky.engine.RendererPreference
+import com.jhaiian.lucky.engine.ScaleFilter
 import com.jhaiian.lucky.engine.Upscaler
-import com.jhaiian.lucky.ui.settings.motionQualityLabel
+import com.jhaiian.lucky.ui.findActivity
 import com.jhaiian.lucky.ui.home.formatDuration
 import com.jhaiian.lucky.ui.home.formatSampleRate
-import com.jhaiian.lucky.ui.findActivity
 import com.jhaiian.lucky.ui.settings.downscalerLabel
+import com.jhaiian.lucky.ui.settings.motionQualityLabel
 import com.jhaiian.lucky.ui.settings.scaleFilterLabel
 import com.jhaiian.lucky.ui.settings.upscalerLabel
 import com.jhaiian.lucky.ui.theme.LocalLuckyColors
-import androidx.compose.material3.Surface as MaterialSurface
 
 internal fun seekIcons(stepMs: Long): Pair<ImageVector, ImageVector> = when (stepMs) {
     5_000L -> Icons.Rounded.Replay5 to Icons.Rounded.Forward5
@@ -110,10 +107,44 @@ internal fun seekIcons(stepMs: Long): Pair<ImageVector, ImageVector> = when (ste
 }
 
 @Composable
-private fun PlayerIcon(icon: ImageVector, description: String, active: Boolean = false, size: Float = 1f, onClick: () -> Unit) {
-    val palette = LocalPlayerPalette.current
-    IconButton(onClick = onClick, modifier = Modifier.size((48 * size).dp)) {
-        Icon(icon, contentDescription = description, tint = if (active) palette.active else palette.icon, modifier = Modifier.size((24 * size).dp))
+private fun PlayerClock(clock: ClockStatus, modifier: Modifier = Modifier) {
+    Row(
+        modifier
+            .chromeSurface(RoundedCornerShape(50))
+            .padding(horizontal = 12.dp, vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            clock.time,
+            color = Color.White,
+            style = chromeTextStyle(MaterialTheme.typography.labelLarge),
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1
+        )
+        clock.battery?.let { battery ->
+            val mood = battery.mood
+            val tint by animateColorAsState(
+                if (mood == BatteryMood.NORMAL) Color.White else batteryAccent(mood),
+                tween(300),
+                label = "batteryText"
+            )
+            val description = batteryDescription(battery)
+            Spacer(Modifier.width(8.dp))
+            Row(
+                Modifier.clearAndSetSemantics { contentDescription = description },
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                BatteryGlyph(battery)
+                Spacer(Modifier.width(5.dp))
+                Text(
+                    "${battery.level}%",
+                    color = tint,
+                    style = chromeTextStyle(MaterialTheme.typography.labelMedium),
+                    fontWeight = if (mood == BatteryMood.NORMAL) FontWeight.Normal else FontWeight.SemiBold,
+                    maxLines = 1
+                )
+            }
+        }
     }
 }
 
@@ -121,28 +152,32 @@ private fun PlayerIcon(icon: ImageVector, description: String, active: Boolean =
 internal fun PlayerTopBar(
     title: String?,
     subtitle: String?,
-    clock: Pair<String, Int?>?,
+    clock: ClockStatus?,
+    compact: Boolean,
     onBack: () -> Unit,
     onSubtitles: (() -> Unit)?,
     subtitlesOn: Boolean,
     onAudio: (() -> Unit)?,
     onChapters: (() -> Unit)?,
     onQuickSettings: () -> Unit,
-    onStats: () -> Unit
+    onStats: (() -> Unit)?,
+    statsOn: Boolean,
+    modifier: Modifier = Modifier
 ) {
-    val iconSize = if (LocalConfiguration.current.screenWidthDp < 420) 0.9f else 1f
+    val iconSize = if (compact) 0.9f else 1f
     Row(
-        Modifier
+        modifier
             .fillMaxWidth()
-            .padding(horizontal = 4.dp, vertical = 4.dp),
+            .padding(horizontal = 8.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        PlayerIcon(Icons.AutoMirrored.Rounded.ArrowBack, stringResource(R.string.player_back), onClick = onBack)
+        PlayerButton(Icons.AutoMirrored.Rounded.ArrowBack, stringResource(R.string.player_back), onClick = onBack, size = iconSize)
+        Spacer(Modifier.width(6.dp))
         Column(Modifier.weight(1f)) {
             Text(
                 text = title.orEmpty(),
                 color = Color.White,
-                style = MaterialTheme.typography.titleMedium,
+                style = chromeTextStyle(MaterialTheme.typography.titleMedium),
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
@@ -150,37 +185,31 @@ internal fun PlayerTopBar(
             if (!subtitle.isNullOrEmpty()) {
                 Text(
                     text = subtitle,
-                    color = Color.White.copy(alpha = 0.7f),
-                    style = MaterialTheme.typography.labelMedium,
+                    color = Color.White.copy(alpha = 0.72f),
+                    style = chromeTextStyle(MaterialTheme.typography.labelMedium),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
             }
         }
         if (clock != null) {
-            Row(
-                Modifier.padding(horizontal = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(clock.first, color = Color.White, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
-                clock.second?.let { level ->
-                    Spacer(Modifier.width(8.dp))
-                    Icon(Icons.Rounded.Battery5Bar, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
-                    Text("$level%", color = Color.White, style = MaterialTheme.typography.labelMedium)
-                }
+            PlayerClock(clock, Modifier.padding(horizontal = 6.dp))
+        }
+        PlayerButtonGroup {
+            if (onChapters != null) {
+                PlayerButton(Icons.Rounded.Bookmarks, stringResource(R.string.player_chapters), size = iconSize, onClick = onChapters)
+            }
+            if (onSubtitles != null) {
+                PlayerButton(Icons.Rounded.ClosedCaption, stringResource(R.string.track_subtitle), size = iconSize, active = subtitlesOn, onClick = onSubtitles)
+            }
+            if (onAudio != null) {
+                PlayerButton(Icons.Rounded.Audiotrack, stringResource(R.string.track_audio), size = iconSize, onClick = onAudio)
+            }
+            PlayerButton(Icons.Rounded.Tune, stringResource(R.string.player_quick_settings), size = iconSize, onClick = onQuickSettings)
+            if (onStats != null) {
+                PlayerButton(Icons.Rounded.Info, stringResource(R.string.player_stats), size = iconSize, active = statsOn, onClick = onStats)
             }
         }
-        if (onChapters != null) {
-            PlayerIcon(Icons.Rounded.Bookmarks, stringResource(R.string.player_chapters), size = iconSize, onClick = onChapters)
-        }
-        if (onSubtitles != null) {
-            PlayerIcon(Icons.Rounded.ClosedCaption, stringResource(R.string.track_subtitle), size = iconSize, active = subtitlesOn, onClick = onSubtitles)
-        }
-        if (onAudio != null) {
-            PlayerIcon(Icons.Rounded.Audiotrack, stringResource(R.string.track_audio), size = iconSize, onClick = onAudio)
-        }
-        PlayerIcon(Icons.Rounded.Tune, stringResource(R.string.player_quick_settings), size = iconSize, onClick = onQuickSettings)
-        PlayerIcon(Icons.Rounded.Info, stringResource(R.string.player_stats), size = iconSize, onClick = onStats)
     }
 }
 
@@ -197,51 +226,43 @@ internal fun PlayerCenterControls(
     onNext: (() -> Unit)?,
     modifier: Modifier = Modifier,
     onStepBack: (() -> Unit)? = null,
-    onStepForward: (() -> Unit)? = null
+    onStepForward: (() -> Unit)? = null,
+    compact: Boolean = false,
+    docked: Boolean = false
 ) {
-    val palette = LocalPlayerPalette.current
-    val playing = state == PlaybackState.PLAYING || state == PlaybackState.BUFFERING
-    val (icon, label) = when {
-        state == PlaybackState.ENDED -> Icons.Rounded.Replay to stringResource(R.string.player_replay)
-        playing -> Icons.Rounded.Pause to stringResource(R.string.player_pause)
-        else -> Icons.Rounded.PlayArrow to stringResource(R.string.player_play)
-    }
     val (rewindIcon, forwardIcon) = seekIcons(seekStepMs)
-    val compact = LocalConfiguration.current.screenWidthDp < 360
     val step = scale * if (compact) 0.85f else 1f
+    val seekSize = if (docked) step else step * 1.25f
+    val playSize = (if (docked) 56f else 74f) * step
+    val gap = (if (docked) 2f else 22f) * step
     Row(
         modifier = modifier,
-        horizontalArrangement = Arrangement.spacedBy((24 * step).dp),
+        horizontalArrangement = Arrangement.spacedBy(gap.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         if (onPrevious != null || onNext != null) {
-            PlayerIcon(Icons.Rounded.SkipPrevious, stringResource(R.string.player_previous), size = step) { onPrevious?.invoke() }
+            PlayerButton(Icons.Rounded.SkipPrevious, stringResource(R.string.player_previous), size = step, onClick = { onPrevious?.invoke() })
         }
         if (showSeekButtons) {
-            PlayerIcon(rewindIcon, stringResource(R.string.player_rewind), size = step * 1.25f, onClick = onRewind)
+            PlayerButton(rewindIcon, stringResource(R.string.player_rewind), size = seekSize, onClick = onRewind)
         }
         if (onStepBack != null) {
-            PlayerIcon(Icons.AutoMirrored.Rounded.KeyboardArrowLeft, stringResource(R.string.player_step_back), size = step, onClick = onStepBack)
+            PlayerButton(Icons.AutoMirrored.Rounded.KeyboardArrowLeft, stringResource(R.string.player_step_back), size = step, onClick = onStepBack)
         }
-        MaterialSurface(
+        PlayPauseButton(
+            state = state,
             onClick = onToggle,
-            shape = CircleShape,
-            color = palette.accent,
-            contentColor = palette.onAccent,
-            modifier = Modifier.size((68 * step).dp)
-        ) {
-            Box(contentAlignment = Alignment.Center) {
-                Icon(icon, contentDescription = label, modifier = Modifier.size((38 * step).dp))
-            }
-        }
+            diameter = playSize.dp,
+            modifier = Modifier.padding(horizontal = if (docked) 6.dp else 0.dp)
+        )
         if (onStepForward != null) {
-            PlayerIcon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, stringResource(R.string.player_step_forward), size = step, onClick = onStepForward)
+            PlayerButton(Icons.AutoMirrored.Rounded.KeyboardArrowRight, stringResource(R.string.player_step_forward), size = step, onClick = onStepForward)
         }
         if (showSeekButtons) {
-            PlayerIcon(forwardIcon, stringResource(R.string.player_forward), size = step * 1.25f, onClick = onForward)
+            PlayerButton(forwardIcon, stringResource(R.string.player_forward), size = seekSize, onClick = onForward)
         }
         if (onPrevious != null || onNext != null) {
-            PlayerIcon(Icons.Rounded.SkipNext, stringResource(R.string.player_next), size = step) { onNext?.invoke() }
+            PlayerButton(Icons.Rounded.SkipNext, stringResource(R.string.player_next), size = step, onClick = { onNext?.invoke() })
         }
     }
 }
@@ -253,17 +274,26 @@ internal fun PlayerStepControls(
     onStepForward: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Row(
-        modifier = modifier
-            .clip(RoundedCornerShape(50))
-            .background(Color.Black.copy(alpha = 0.4f))
-            .padding(horizontal = 6.dp),
-        horizontalArrangement = Arrangement.spacedBy((16 * scale).dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        PlayerIcon(Icons.AutoMirrored.Rounded.KeyboardArrowLeft, stringResource(R.string.player_step_back), size = scale, onClick = onStepBack)
-        PlayerIcon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, stringResource(R.string.player_step_forward), size = scale, onClick = onStepForward)
+    PlayerPill(modifier, inner = 6.dp) {
+        PlayerButton(Icons.AutoMirrored.Rounded.KeyboardArrowLeft, stringResource(R.string.player_step_back), size = scale, onClick = onStepBack)
+        Spacer(Modifier.width((12 * scale).dp))
+        PlayerButton(Icons.AutoMirrored.Rounded.KeyboardArrowRight, stringResource(R.string.player_step_forward), size = scale, onClick = onStepForward)
     }
+}
+
+@Composable
+private fun TimeLabel(text: String, color: Color, onClick: (() -> Unit)?, modifier: Modifier = Modifier) {
+    Text(
+        text = text,
+        color = color,
+        style = chromeTextStyle(MaterialTheme.typography.labelLarge),
+        fontWeight = FontWeight.SemiBold,
+        maxLines = 1,
+        modifier = modifier
+            .clip(RoundedCornerShape(8.dp))
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+            .padding(horizontal = 4.dp, vertical = 4.dp)
+    )
 }
 
 @Composable
@@ -272,14 +302,17 @@ internal fun PlayerSeekRow(
     scrubFraction: Float?,
     showRemaining: Boolean,
     style: SeekStyle,
+    timeLayout: TimeLayout,
     onToggleRemaining: () -> Unit,
     onScrub: (Float) -> Unit,
     onScrubFinished: () -> Unit,
+    modifier: Modifier = Modifier,
     previewEnabled: Boolean = false,
     previewBitmap: Bitmap? = null,
     loopStartMs: Long? = null,
     loopEndMs: Long? = null
 ) {
+    val palette = LocalPlayerPalette.current
     val duration = status.durationMs
     val fraction = scrubFraction ?: if (duration != null && duration > 0) {
         (status.positionMs.toFloat() / duration).coerceIn(0f, 1f)
@@ -298,44 +331,71 @@ internal fun PlayerSeekRow(
         showRemaining -> "−" + formatDuration(remaining ?: 0L)
         else -> formatDuration(duration)
     }
+    val positionText = formatDuration(shownPosition)
+    val positionColor by animateColorAsState(if (scrubFraction != null) palette.active else Color.White, tween(180), label = "time")
+    val toggle = if (duration != null) onToggleRemaining else null
     var origin by remember { mutableStateOf(Offset.Zero) }
     var barStart by remember { mutableFloatStateOf(0f) }
     var barSpan by remember { mutableFloatStateOf(0f) }
-    Box(Modifier.fillMaxWidth().onGloballyPositioned { origin = it.positionInRoot() }) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = if (total != null) stringResource(R.string.player_time_pair, formatDuration(shownPosition), total) else formatDuration(shownPosition),
-                color = Color.White,
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(8.dp))
-                    .clickable(enabled = duration != null, onClick = onToggleRemaining)
-                    .padding(horizontal = 4.dp, vertical = 4.dp)
-            )
-            Spacer(Modifier.width(10.dp))
-            PlayerSeekBar(
-                style = style,
-                value = fraction,
-                enabled = enabled,
-                playing = status.state == PlaybackState.PLAYING,
-                markers = markers,
-                onValueChange = onScrub,
-                onValueChangeFinished = onScrubFinished,
-                loopStart = loopStartMs?.let { start -> duration?.takeIf { it > 0 }?.let { (start.toFloat() / it).coerceIn(0f, 1f) } },
-                loopEnd = loopEndMs?.let { end -> duration?.takeIf { it > 0 }?.let { (end.toFloat() / it).coerceIn(0f, 1f) } },
-                modifier = Modifier
-                    .weight(1f)
-                    .onGloballyPositioned { coordinates ->
-                        barStart = coordinates.positionInRoot().x
-                        barSpan = coordinates.size.width.toFloat()
-                    }
-            )
+    val bar: @Composable (Modifier) -> Unit = { barModifier ->
+        PlayerSeekBar(
+            style = style,
+            value = fraction,
+            enabled = enabled,
+            playing = status.state == PlaybackState.PLAYING,
+            markers = markers,
+            onValueChange = onScrub,
+            onValueChangeFinished = onScrubFinished,
+            loopStart = loopStartMs?.let { start -> duration?.takeIf { it > 0 }?.let { (start.toFloat() / it).coerceIn(0f, 1f) } },
+            loopEnd = loopEndMs?.let { end -> duration?.takeIf { it > 0 }?.let { (end.toFloat() / it).coerceIn(0f, 1f) } },
+            modifier = barModifier.onGloballyPositioned { coordinates ->
+                barStart = coordinates.positionInRoot().x
+                barSpan = coordinates.size.width.toFloat()
+            }
+        )
+    }
+    Box(modifier.fillMaxWidth().onGloballyPositioned { origin = it.positionInRoot() }) {
+        when (timeLayout) {
+            TimeLayout.INLINE -> Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TimeLabel(
+                    text = if (total != null) stringResource(R.string.player_time_pair, positionText, total) else positionText,
+                    color = positionColor,
+                    onClick = toggle
+                )
+                Spacer(Modifier.width(10.dp))
+                bar(Modifier.weight(1f))
+            }
+            TimeLayout.SPLIT -> Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TimeLabel(positionText, positionColor, null)
+                Spacer(Modifier.width(8.dp))
+                bar(Modifier.weight(1f))
+                if (total != null) {
+                    Spacer(Modifier.width(8.dp))
+                    TimeLabel(total, Color.White, toggle)
+                }
+            }
+            TimeLayout.ABOVE -> Column(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+            ) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    TimeLabel(positionText, positionColor, null)
+                    Spacer(Modifier.weight(1f))
+                    if (total != null) TimeLabel(total, Color.White.copy(alpha = 0.85f), toggle)
+                }
+                bar(Modifier.fillMaxWidth())
+            }
         }
         if (previewEnabled && scrubFraction != null && duration != null && barSpan > 0f) {
             SeekPreviewCard(
@@ -348,81 +408,80 @@ internal fun PlayerSeekRow(
     }
 }
 
+@Immutable
+internal data class QuickButtonState(
+    val speed: Float,
+    val aspectActive: Boolean,
+    val repeat: RepeatMode,
+    val mirror: Boolean,
+    val rotated: Boolean,
+    val loopStartMs: Long?,
+    val loopEndMs: Long?,
+    val interpolating: Boolean
+)
+
 @Composable
 internal fun PlayerQuickButtons(
     buttons: Set<String>,
-    ui: PlayerUiState,
+    order: List<QuickButton>,
+    state: QuickButtonState,
     pipAvailable: Boolean,
     screenshotAvailable: Boolean,
-    interpolating: Boolean,
     onAspect: () -> Unit,
     onRotate: () -> Unit,
     onSpeed: () -> Unit,
     onRepeat: () -> Unit,
     onMirror: () -> Unit,
     onPip: () -> Unit,
+    onBackground: () -> Unit,
     onMotion: () -> Unit,
     onLoop: () -> Unit,
     onScreenshot: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    alignment: Alignment = Alignment.CenterEnd
 ) {
-    val palette = LocalPlayerPalette.current
-    val shown = QuickButton.entries.filter {
+    val bubbles = LocalPlayerChromeStyle.current.buttonStyle == ButtonStyle.BUBBLE
+    val shown = order.filter {
         it.key in buttons && it != QuickButton.LOCK && (it != QuickButton.PIP || pipAvailable) && (it != QuickButton.SCREENSHOT || screenshotAvailable)
     }
     if (shown.isEmpty()) return
-    Box(modifier, contentAlignment = Alignment.CenterEnd) {
-        Row(
-            Modifier
-                .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            shown.forEach { button ->
-                val description = stringResource(button.labelRes)
-                when (button) {
-                    QuickButton.SPEED -> Text(
-                        text = formatSpeed(ui.speed),
-                        color = if (ui.speed != 1f) palette.active else palette.icon,
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(50))
-                            .clickable(onClick = onSpeed)
-                            .padding(horizontal = 12.dp, vertical = 12.dp)
-                    )
-                    QuickButton.ASPECT -> PlayerIcon(Icons.Rounded.AspectRatio, description, active = ui.aspect > 0f || ui.zoomed, onClick = onAspect)
-                    QuickButton.MOTION -> PlayerIcon(Icons.Rounded.AutoAwesomeMotion, description, active = interpolating, onClick = onMotion)
-                    QuickButton.REPEAT -> PlayerIcon(
-                        when (ui.repeat) {
-                            RepeatMode.OFF -> Icons.Rounded.Repeat
-                            RepeatMode.ONE -> Icons.Rounded.RepeatOne
-                            RepeatMode.ALL -> Icons.Rounded.Repeat
-                        },
-                        description,
-                        active = ui.repeat != RepeatMode.OFF,
-                        onClick = onRepeat
-                    )
-                    QuickButton.MIRROR -> PlayerIcon(Icons.Rounded.Flip, description, active = ui.mirror, onClick = onMirror)
-                    QuickButton.PIP -> PlayerIcon(Icons.Rounded.PictureInPictureAlt, description, onClick = onPip)
-                    QuickButton.ROTATE -> PlayerIcon(Icons.Rounded.ScreenRotation, description, active = ui.manualOrientation != null, onClick = onRotate)
-                    QuickButton.LOOP -> Text(
-                        text = when {
-                            ui.loopStartMs == null -> "A–B"
-                            ui.loopEndMs == null -> "A–"
-                            else -> "A–B"
-                        },
-                        color = if (ui.loopStartMs != null) palette.active else palette.icon,
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(50))
-                            .semantics { contentDescription = description }
-                            .clickable(onClick = onLoop)
-                            .padding(horizontal = 12.dp, vertical = 12.dp)
-                    )
-                    QuickButton.SCREENSHOT -> PlayerIcon(Icons.Rounded.PhotoCamera, description, onClick = onScreenshot)
-                    QuickButton.LOCK -> Unit
+    Box(modifier, contentAlignment = alignment) {
+        PlayerButtonGroup(Modifier.padding(horizontal = 8.dp)) {
+            Row(
+                Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(if (bubbles) 4.dp else 0.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                shown.forEach { button ->
+                    val description = stringResource(button.labelRes)
+                    when (button) {
+                        QuickButton.SPEED -> PlayerTextButton(
+                            text = formatSpeed(state.speed),
+                            description = description,
+                            active = state.speed != 1f,
+                            onClick = onSpeed
+                        )
+                        QuickButton.ASPECT -> PlayerButton(Icons.Rounded.AspectRatio, description, active = state.aspectActive, onClick = onAspect)
+                        QuickButton.MOTION -> PlayerButton(Icons.Rounded.AutoAwesomeMotion, description, active = state.interpolating, onClick = onMotion)
+                        QuickButton.REPEAT -> PlayerButton(
+                            if (state.repeat == RepeatMode.ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
+                            description,
+                            active = state.repeat != RepeatMode.OFF,
+                            onClick = onRepeat
+                        )
+                        QuickButton.MIRROR -> PlayerButton(Icons.Rounded.Flip, description, active = state.mirror, onClick = onMirror)
+                        QuickButton.PIP -> PlayerButton(Icons.Rounded.PictureInPictureAlt, description, onClick = onPip)
+                        QuickButton.BACKGROUND -> PlayerButton(Icons.Rounded.Headphones, description, onClick = onBackground)
+                        QuickButton.ROTATE -> PlayerButton(Icons.Rounded.ScreenRotation, description, active = state.rotated, onClick = onRotate)
+                        QuickButton.LOOP -> PlayerTextButton(
+                            text = if (state.loopStartMs != null && state.loopEndMs == null) "A–" else "A–B",
+                            description = description,
+                            active = state.loopStartMs != null,
+                            onClick = onLoop
+                        )
+                        QuickButton.SCREENSHOT -> PlayerButton(Icons.Rounded.PhotoCamera, description, onClick = onScreenshot)
+                        QuickButton.LOCK -> Unit
+                    }
                 }
             }
         }
@@ -431,33 +490,30 @@ internal fun PlayerQuickButtons(
 
 @Composable
 internal fun PlayerSideLock(onLock: () -> Unit, modifier: Modifier = Modifier) {
-    val palette = LocalPlayerPalette.current
-    IconButton(
-        onClick = onLock,
-        modifier = modifier
-            .size(48.dp)
-            .clip(CircleShape)
-            .background(Color.Black.copy(alpha = 0.45f))
-    ) {
-        Icon(Icons.Rounded.LockOpen, contentDescription = stringResource(R.string.player_button_lock), tint = palette.icon)
+    PlayerPill(modifier, shape = CircleShape, inner = 0.dp) {
+        PlayerButton(Icons.Rounded.LockOpen, stringResource(R.string.player_button_lock), onClick = onLock)
     }
 }
 
 @Composable
 internal fun LockedOverlay(visible: Boolean, onUnlock: () -> Unit, modifier: Modifier = Modifier) {
-    val colors = LocalLuckyColors.current
+    val palette = LocalPlayerPalette.current
     if (!visible) return
     Row(
         modifier
-            .clip(RoundedCornerShape(28.dp))
-            .background(Color.Black.copy(alpha = 0.55f))
+            .chromeSurface(RoundedCornerShape(28.dp), forced = true)
             .clickable(onClick = onUnlock)
             .padding(horizontal = 18.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(Icons.Rounded.LockOpen, contentDescription = null, tint = colors.primary, modifier = Modifier.size(22.dp))
+        Icon(Icons.Rounded.LockOpen, contentDescription = null, tint = palette.accent, modifier = Modifier.size(22.dp))
         Spacer(Modifier.width(10.dp))
-        Text(stringResource(R.string.player_unlock), color = Color.White, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+        Text(
+            stringResource(R.string.player_unlock),
+            color = Color.White,
+            style = chromeTextStyle(MaterialTheme.typography.labelLarge),
+            fontWeight = FontWeight.SemiBold
+        )
     }
 }
 
@@ -555,13 +611,15 @@ internal fun StatsPanel(
                 )
             }
             if (status.motionLevel > 0) {
+                val quality = stringResource(motionQualityLabel(MotionQuality.fromCode(status.motionLevel)))
+                val fps = String.format(java.util.Locale.getDefault(), "%.0f", status.outputFps)
                 StatRow(
                     stringResource(R.string.stats_motion),
-                    stringResource(
-                        R.string.stats_motion_value,
-                        stringResource(motionQualityLabel(MotionQuality.fromCode(status.motionLevel))),
-                        String.format(java.util.Locale.getDefault(), "%.0f", status.outputFps)
-                    )
+                    if (status.motionScale in 1..99) {
+                        stringResource(R.string.stats_motion_value_scaled, quality, fps, status.motionScale)
+                    } else {
+                        stringResource(R.string.stats_motion_value, quality, fps)
+                    }
                 )
             } else if (status.smoothBlending) {
                 StatRow(stringResource(R.string.settings_smooth_motion), stringResource(R.string.stats_smooth_active))

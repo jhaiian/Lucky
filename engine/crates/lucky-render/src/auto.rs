@@ -1,4 +1,4 @@
-use lucky_player::{ActiveScaling, DisplayOptions, DownscalerMode, MotionConfig, Presenter, ScalerMode, VideoFrame, ViewTransform};
+use lucky_player::{ActiveScaling, Ahead, DisplayOptions, DownscalerMode, MotionConfig, Presenter, ScalerMode, VideoFrame, ViewTransform};
 
 use crate::egl::monotonic_ns;
 use crate::gles::GlesPresenter;
@@ -80,6 +80,32 @@ impl AutoPresenter {
                 log::info!("requested a {fps} Hz display rate");
             }
         }
+    }
+
+    fn blend_with(&mut self, from: &VideoFrame, to: &VideoFrame, weight: f32, delay_us: i64, ahead: Option<Ahead<'_>>) -> bool {
+        self.hint_frame_rate(to);
+        self.require_gles_for(to);
+        if let Some(vulkan) = self.vulkan.as_mut() {
+            let drawn = vulkan.present_blend(from, to, weight, delay_us, ahead);
+            let failed = vulkan.failed();
+            let unavailable = vulkan.smooth_unavailable();
+            if !failed && !unavailable {
+                return drawn;
+            }
+            if failed {
+                log::warn!("switching from Vulkan to OpenGL ES");
+                self.disable_vulkan();
+                if let Some(window) = self.window.clone() {
+                    self.gles.set_window(Some(window));
+                }
+            } else {
+                self.use_gles("Vulkan smooth motion is unavailable");
+                if drawn {
+                    return true;
+                }
+            }
+        }
+        self.gles.present_blend(from, to, weight, delay_us, ahead)
     }
 }
 
@@ -200,29 +226,11 @@ impl Presenter for AutoPresenter {
     }
 
     fn present_blend(&mut self, from: &VideoFrame, to: &VideoFrame, weight: f32, delay_us: i64) -> bool {
-        self.hint_frame_rate(to);
-        self.require_gles_for(to);
-        if let Some(vulkan) = self.vulkan.as_mut() {
-            let drawn = vulkan.present_blend(from, to, weight, delay_us);
-            let failed = vulkan.failed();
-            let unavailable = vulkan.smooth_unavailable();
-            if !failed && !unavailable {
-                return drawn;
-            }
-            if failed {
-                log::warn!("switching from Vulkan to OpenGL ES");
-                self.disable_vulkan();
-                if let Some(window) = self.window.clone() {
-                    self.gles.set_window(Some(window));
-                }
-            } else {
-                self.use_gles("Vulkan smooth motion is unavailable");
-                if drawn {
-                    return true;
-                }
-            }
-        }
-        self.gles.present_blend(from, to, weight, delay_us)
+        self.blend_with(from, to, weight, delay_us, None)
+    }
+
+    fn present_blend_ahead(&mut self, from: &VideoFrame, to: &VideoFrame, weight: f32, delay_us: i64, ahead: Ahead<'_>) -> bool {
+        self.blend_with(from, to, weight, delay_us, Some(ahead))
     }
 
     fn set_motion(&mut self, config: MotionConfig) {

@@ -1,0 +1,8 @@
+• Puwede nang mag-play sa background, may kasamang mini-player
+• Buksan sa Lucky ang mga video mula sa ibang app
+• Pindutin nang matagal ang video para i-share, i-rename, i-delete, o makita ang details nito
+• Bagong itsura ng player, may live preview page
+• Volume boost hanggang 300% at Audio only mode
+• Mga button para i-skip ang intro, recap at credits
+• Naaalala ng mga episode ng isang show ang audio, subtitles at zoom mo
+• Mas smooth at mas malinis na motion interpolation

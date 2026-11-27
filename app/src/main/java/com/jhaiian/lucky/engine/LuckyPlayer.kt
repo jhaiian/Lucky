@@ -148,6 +148,7 @@ data class PlayerStatus(
     val smoothBlending: Boolean = false,
     val learnedCost: Double = -1.0,
     val motionLevel: Int = 0,
+    val motionScale: Int = 0,
     val outputFps: Double = 0.0,
     val learnedMotion: Int = 0,
     val activeKernel: Int = 0,
@@ -198,6 +199,7 @@ data class PlayerStatus(
             smoothBlending = json.optBoolean("smoothBlending"),
             learnedCost = json.optDouble("learnedCost", -1.0),
             motionLevel = json.optInt("motionLevel", 0),
+            motionScale = json.optInt("motionScale", 0),
             outputFps = json.optDouble("outputFps", 0.0),
             learnedMotion = json.optInt("learnedMotion", 0),
             activeKernel = json.optInt("activeKernel", 0),
@@ -423,28 +425,10 @@ enum class MotionTarget(val code: Int) {
     }
 }
 
-enum class ArtifactProtection(val code: Int) {
-    OFF(0), LOW(1), MEDIUM(2), STRONG(3);
-
-    companion object {
-        fun parse(value: String?) = entries.firstOrNull { it.name.equals(value, ignoreCase = true) } ?: MEDIUM
-    }
-}
-
-enum class SceneSensitivity(val code: Int) {
-    LOW(0), MEDIUM(1), HIGH(2);
-
-    companion object {
-        fun parse(value: String?) = entries.firstOrNull { it.name.equals(value, ignoreCase = true) } ?: MEDIUM
-    }
-}
-
 data class MotionOptions(
     val quality: MotionQuality = MotionQuality.AUTO,
     val target: MotionTarget = MotionTarget.SCREEN,
     val targetFps: Int = MotionTarget.DEFAULT_FPS,
-    val protection: ArtifactProtection = ArtifactProtection.MEDIUM,
-    val scene: SceneSensitivity = SceneSensitivity.MEDIUM,
     val anime: Boolean = false,
     val lowFrameRateOnly: Boolean = false,
     val learned: Int = 0
@@ -776,8 +760,6 @@ class LuckyPlayer private constructor(handle: Long, private val sink: AudioSink,
             LuckyEngine.setMotion(
                 it,
                 options.quality.code,
-                options.protection.code,
-                options.scene.code,
                 options.target.code,
                 options.targetFps,
                 options.anime,

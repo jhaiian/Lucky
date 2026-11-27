@@ -19,6 +19,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.AndroidExternalSurface
@@ -26,6 +27,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -42,6 +44,7 @@ import androidx.compose.material.icons.rounded.AspectRatio
 import androidx.compose.material.icons.rounded.AutoAwesomeMotion
 import androidx.compose.material.icons.rounded.Bedtime
 import androidx.compose.material.icons.rounded.ClosedCaptionDisabled
+import androidx.compose.material.icons.rounded.Headphones
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Loop
 import androidx.compose.material.icons.rounded.Memory
@@ -65,14 +68,15 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalConfiguration
@@ -96,9 +100,11 @@ import com.jhaiian.lucky.data.LuckyPrefs
 import com.jhaiian.lucky.data.PlayQueue
 import com.jhaiian.lucky.data.RememberedTracks
 import com.jhaiian.lucky.data.SavedSubtitle
+import com.jhaiian.lucky.data.ShowMemory
 import com.jhaiian.lucky.data.ScreenshotStore
 import com.jhaiian.lucky.data.TrackChoice
 import com.jhaiian.lucky.data.TrackLanguage
+import com.jhaiian.lucky.data.VideoFiles
 import com.jhaiian.lucky.data.VideoViewMemory
 import com.jhaiian.lucky.data.WatchHistory
 import com.jhaiian.lucky.engine.AudioEffects
@@ -110,6 +116,9 @@ import com.jhaiian.lucky.engine.BlackBarDetector
 import com.jhaiian.lucky.engine.FitMode
 import com.jhaiian.lucky.engine.LuckyPlayer
 import com.jhaiian.lucky.engine.PlaybackState
+import com.jhaiian.lucky.playback.NowPlaying
+import com.jhaiian.lucky.playback.NowPlayingState
+import com.jhaiian.lucky.playback.PlaybackControls
 import com.jhaiian.lucky.engine.PlayerStatus
 import com.jhaiian.lucky.engine.RefreshMatch
 import com.jhaiian.lucky.engine.RendererPreference
@@ -129,13 +138,22 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
 private const val HISTORY_INTERVAL_MS = 5_000L
+private const val NOW_PLAYING_POLL_MS = 500L
+private const val NOW_PLAYING_DRIFT_MS = 1_500L
 private const val PREVIEW_OPEN_DELAY_MS = 1_500L
 private const val VIEW_SAVE_DELAY_MS = 500L
+private const val RESUME_NOTICE_MS = 6_000L
+private const val ZOOM_RESET_MS = 4_000L
+private const val VOLUME_OVERLAY_MS = 1_400L
+private const val BACKGROUND_SERVICE_WAIT_MS = 2_000L
+private const val BACKGROUND_LEAVE_DELAY_MS = 300L
 private const val STRIP_START_DELAY_MS = 3_000L
 private const val STRIP_MIN_CORES = 6
 private const val SWIPE_SEEK_RANGE_MS = 100_000f
@@ -170,7 +188,15 @@ private class GestureScratch {
 }
 
 @Composable
-fun PlayerScreen(uri: Uri, title: String?, onClose: () -> Unit, onOpen: (String, String?) -> Unit) {
+fun PlayerScreen(
+    uri: Uri,
+    title: String?,
+    recordHistory: Boolean = true,
+    minimized: Boolean = false,
+    onMinimize: (() -> Unit)? = null,
+    onClose: () -> Unit,
+    onOpen: (String, String?) -> Unit
+) {
     val context = LocalContext.current
     val activity = remember(context) { context.findActivity() as? ComponentActivity }
     val config = rememberPlayerConfig()
@@ -188,14 +214,24 @@ fun PlayerScreen(uri: Uri, title: String?, onClose: () -> Unit, onOpen: (String,
             smoothMotion = config.smoothMotion,
             motionQuality = config.motionQuality,
             hdrOutput = config.hdrOutput
-        )
+        ).also {
+            if (config.rememberVolume) it.volumeBoost = prefs.getFloat(LuckyPrefs.PLAYER_VOLUME_BOOST, 1f).coerceIn(1f, VOLUME_BOOST_MAX)
+        }
     }
     val pipAvailable = remember { Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && pipSupported(context) }
     val latestConfig by rememberUpdatedState(config)
+    DisposableEffect(Unit) {
+        onDispose { NowPlaying.release() }
+    }
+    LaunchedEffect(config.backgroundPlay, ui.backgroundSession) {
+        if (!config.backgroundPlay && !ui.backgroundSession) NowPlaying.release()
+    }
 
-    DisposableEffect(activity) {
+    DisposableEffect(activity, minimized) {
         val lucky = activity as? LuckyActivity
-        if (lucky != null) {
+        if (minimized) {
+            lucky?.setPlayerImmersive(false)
+        } else if (lucky != null) {
             lucky.setPlayerImmersive(true)
         } else {
             activity?.window?.let { window ->
@@ -208,17 +244,19 @@ fun PlayerScreen(uri: Uri, title: String?, onClose: () -> Unit, onOpen: (String,
     }
 
     val requested = requestedOrientation(ui.orientation, ui.videoShape, ui.manualOrientation)
+    val originalOrientation = remember(activity) { activity?.requestedOrientation ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED }
     DisposableEffect(activity) {
-        val original = activity?.requestedOrientation ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-        onDispose { activity?.requestedOrientation = original }
+        onDispose { activity?.requestedOrientation = originalOrientation }
     }
-    LaunchedEffect(requested, inPip) {
-        if (!inPip) activity?.requestedOrientation = requested
+    LaunchedEffect(requested, inPip, minimized) {
+        if (!inPip) activity?.requestedOrientation = if (minimized) originalOrientation else requested
     }
 
     val hdrBoost = config.hdrBoost && ui.hdrContent && ui.brightness < 0f && !inPip
-    LaunchedEffect(ui.brightness, hdrBoost) { applyWindowBrightness(activity, if (hdrBoost) 1f else ui.brightness) }
-    LaunchedEffect(ui.displayOutput) { applyColorMode(activity, ui.displayOutput) }
+    LaunchedEffect(ui.brightness, hdrBoost, minimized) {
+        applyWindowBrightness(activity, if (minimized) -1f else if (hdrBoost) 1f else ui.brightness)
+    }
+    LaunchedEffect(ui.displayOutput, minimized) { applyColorMode(activity, if (minimized) DisplayOutput.SRGB else ui.displayOutput) }
     DisposableEffect(activity) {
         onDispose {
             applyColorMode(activity, DisplayOutput.SRGB)
@@ -229,9 +267,12 @@ fun PlayerScreen(uri: Uri, title: String?, onClose: () -> Unit, onOpen: (String,
     LaunchedEffect(ui.speed) {
         if (latestConfig.rememberSpeed) prefs.edit().putFloat(LuckyPrefs.PLAYER_SPEED, ui.speed).apply()
     }
+    LaunchedEffect(ui.volumeBoost) {
+        if (latestConfig.rememberVolume) prefs.edit().putFloat(LuckyPrefs.PLAYER_VOLUME_BOOST, ui.volumeBoost).apply()
+    }
 
     var sourceHint by remember { mutableStateOf<android.graphics.Rect?>(null) }
-    val autoEnter = config.autoPip && ui.playing && ui.hasVideo && !ui.locked
+    val autoEnter = config.autoPip && ui.playing && ui.hasVideo && !ui.locked && !minimized && !ui.backgroundSession
     if (pipAvailable && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
         LaunchedEffect(ui.videoShape, ui.playing, autoEnter, sourceHint) {
             delay(250)
@@ -274,11 +315,25 @@ fun PlayerScreen(uri: Uri, title: String?, onClose: () -> Unit, onOpen: (String,
         onDispose { preloader.cancel() }
     }
 
-    Box(Modifier.fillMaxSize().background(Color.Black)) {
-        AndroidExternalSurface(modifier = Modifier.fillMaxSize()) {
+    Box(
+        Modifier
+            .fillMaxSize()
+            .then(
+                if (minimized) {
+                    Modifier.layout { measurable, constraints ->
+                        val placeable = measurable.measure(constraints)
+                        layout(0, 0) { placeable.place(-placeable.width * 2, 0) }
+                    }
+                } else {
+                    Modifier
+                }
+            )
+            .background(Color.Black)
+    ) {
+        if (!minimized) AndroidExternalSurface(modifier = Modifier.fillMaxSize()) {
             onSurface { surface, _, _ ->
                 slot.surface = surface
-                slot.player?.setSurface(surface)
+                if (!ui.audioOnly) slot.player?.setSurface(surface)
                 surface.onChanged { _, _ -> slot.player?.redraw() }
                 surface.onDestroyed {
                     slot.surface = null
@@ -290,12 +345,15 @@ fun PlayerScreen(uri: Uri, title: String?, onClose: () -> Unit, onOpen: (String,
             PlayerSession(
                 uri = uri,
                 title = title,
+                recordHistory = recordHistory,
                 ui = ui,
                 config = config,
                 inPip = inPip,
                 pipAvailable = pipAvailable,
                 slot = slot,
                 preloader = preloader,
+                minimized = minimized,
+                onMinimize = onMinimize,
                 onClose = onClose,
                 onOpen = onOpen,
                 onEnterPip = enterPip,
@@ -309,12 +367,15 @@ fun PlayerScreen(uri: Uri, title: String?, onClose: () -> Unit, onOpen: (String,
 private fun PlayerSession(
     uri: Uri,
     title: String?,
+    recordHistory: Boolean,
     ui: PlayerUiState,
     config: PlayerConfig,
     inPip: Boolean,
     pipAvailable: Boolean,
     slot: SurfaceSlot,
     preloader: NextItemPreloader,
+    minimized: Boolean,
+    onMinimize: (() -> Unit)?,
     onClose: () -> Unit,
     onOpen: (String, String?) -> Unit,
     onEnterPip: () -> Unit,
@@ -335,6 +396,7 @@ private fun PlayerSession(
     var showAudio by remember { mutableStateOf(false) }
     var showQuick by remember { mutableStateOf(false) }
     val quickScrollState = rememberScrollState()
+    var quickTab by rememberSaveable { mutableStateOf(QuickTab.PLAYBACK) }
     var showSpeed by remember { mutableStateOf(false) }
     var showEqualizer by remember { mutableStateOf(false) }
     var showChapters by remember { mutableStateOf(false) }
@@ -345,6 +407,8 @@ private fun PlayerSession(
     var hint by remember { mutableStateOf<GestureHint?>(null) }
     var hintStamp by remember { mutableIntStateOf(0) }
     var gestureActive by remember { mutableStateOf(false) }
+    var zoomResetShown by remember { mutableStateOf(false) }
+    var zoomResetStamp by remember { mutableIntStateOf(0) }
     var tapFeedback by remember { mutableStateOf<TapSeekFeedback?>(null) }
     var containerSize by remember { mutableStateOf(IntSize.Zero) }
     var containerOrigin by remember { mutableStateOf(Offset.Zero) }
@@ -352,6 +416,60 @@ private fun PlayerSession(
     val volume = remember { VolumeControl(context) }
     val currentPlayer by rememberUpdatedState(player)
     val prefs = remember { LuckyPrefs.get(context) }
+    val volumeConfig by rememberUpdatedState(config)
+    var volumeIndicator by remember { mutableStateOf<VolumeIndicator?>(null) }
+    var volumeStamp by remember { mutableIntStateOf(0) }
+    LaunchedEffect(volume) {
+        if (volumeConfig.rememberVolume && volume.adjustable) {
+            val saved = prefs.getFloat(LuckyPrefs.PLAYER_VOLUME, -1f)
+            if (saved > 0f) volume.set(saved)
+        }
+    }
+    DisposableEffect(volume) {
+        onDispose {
+            if (volumeConfig.rememberVolume && volume.adjustable) prefs.edit().putFloat(LuckyPrefs.PLAYER_VOLUME, volume.level()).apply()
+        }
+    }
+    LaunchedEffect(volumeStamp, gestureActive) {
+        if (volumeIndicator != null && !gestureActive) {
+            delay(VOLUME_OVERLAY_MS)
+            volumeIndicator = null
+        }
+    }
+    var brightnessIndicator by remember { mutableStateOf<Float?>(null) }
+    var brightnessStamp by remember { mutableIntStateOf(0) }
+    LaunchedEffect(brightnessStamp, gestureActive) {
+        if (brightnessIndicator != null && !gestureActive) {
+            delay(VOLUME_OVERLAY_MS)
+            brightnessIndicator = null
+        }
+    }
+    val keyActivity = remember(context) { context.findActivity() as? LuckyActivity }
+    DisposableEffect(keyActivity, minimized, inPip) {
+        val handler: (Boolean) -> Boolean = handler@{ raise ->
+            if (!volume.adjustable) return@handler false
+            if (raise) {
+                if (volume.atMax()) {
+                    ui.volumeBoost = ((ui.volumeBoost + VOLUME_BOOST_STEP) * 10f).roundToInt().div(10f).coerceAtMost(VOLUME_BOOST_MAX)
+                } else {
+                    volume.step(raise = true)
+                }
+            } else if (ui.volumeBoost > 1f) {
+                ui.volumeBoost = ((ui.volumeBoost - VOLUME_BOOST_STEP) * 10f).roundToInt().div(10f).coerceAtLeast(1f)
+            } else {
+                volume.step(raise = false)
+            }
+            val level = volume.level()
+            if (volumeConfig.rememberVolume) prefs.edit().putFloat(LuckyPrefs.PLAYER_VOLUME, level).apply()
+            volumeIndicator = VolumeIndicator(level, ui.volumeBoost)
+            volumeStamp++
+            true
+        }
+        if (keyActivity != null && !minimized && !inPip) keyActivity.volumeKeyHandler = handler
+        onDispose {
+            if (keyActivity?.volumeKeyHandler === handler) keyActivity.volumeKeyHandler = null
+        }
+    }
     var preferHardware by remember { mutableStateOf(prefs.getBoolean(LuckyPrefs.HARDWARE_DECODING, true)) }
     var renderer by remember { mutableStateOf(RendererPreference.parse(prefs.getString(LuckyPrefs.RENDERER, null))) }
     val power = rememberPowerState()
@@ -401,19 +519,23 @@ private fun PlayerSession(
     var showRemaining by remember { mutableStateOf(config.showRemaining) }
     val uriKey = remember(uri) { uri.toString() }
     val autoSubtitles = remember { LuckyPrefs.autoSubtitles(context) }
-    val historyEnabled = remember { LuckyPrefs.watchHistoryEnabled(context) }
+    val historyEnabled = remember { LuckyPrefs.watchHistoryEnabled(context) && recordHistory }
+    val showKey = remember(uriKey) { ShowMemory.keyFor((title ?: uri.lastPathSegment)?.substringAfterLast('/')) }
+    var delaysReady by remember(uriKey) { mutableStateOf(false) }
     var resumeAtMs by remember(uri) {
         mutableStateOf(
             if (LuckyPrefs.resumePlayback(context)) WatchHistory.get(context, uri.toString())?.takeIf { it.resumable }?.positionMs else null
         )
     }
+    var resumeNotice by remember(uri) { mutableStateOf(resumeAtMs) }
     var subtitlesApplied by remember(uri) { mutableStateOf(false) }
     val trackMemory = remember(uri) { TrackMemory() }
     val externalSubtitles = remember(uri) { mutableMapOf<Int, SavedExternal>() }
     fun rememberedTracks(): RememberedTracks? {
         val stored = if (historyEnabled) WatchHistory.get(context, uriKey)?.tracks else null
-        val audio = trackMemory.audio ?: stored?.audio
-        val subtitle = trackMemory.subtitle ?: stored?.subtitle
+        val show = if (historyEnabled) ShowMemory.get(context, showKey) else null
+        val audio = trackMemory.audio ?: stored?.audio ?: show?.audio
+        val subtitle = trackMemory.subtitle ?: stored?.subtitle ?: show?.subtitle
         return if (audio == null && subtitle == null) null else RememberedTracks(audio, subtitle)
     }
 
@@ -422,21 +544,41 @@ private fun PlayerSession(
         viewMemory.baseFit = ui.fit
         viewMemory.baseAspect = ui.aspect
         ui.resetForNewVideo()
-        VideoViewMemory.get(context, uriKey)?.let { saved ->
+        val savedView = VideoViewMemory.get(context, uriKey) ?: if (historyEnabled) ShowMemory.get(context, showKey)?.view else null
+        savedView?.let { saved ->
             ui.restoreView(saved)
             viewMemory.restored = saved
         }
         viewMemory.ready = true
+        if (historyEnabled) {
+            ShowMemory.get(context, showKey)?.let { show ->
+                ui.subtitleDelayMs = show.subtitleDelayMs
+                ui.audioDelayMs = show.audioDelayMs
+            }
+        }
+        delaysReady = true
+    }
+    LaunchedEffect(showKey, delaysReady, ui.subtitleDelayMs, ui.audioDelayMs) {
+        if (!delaysReady || !historyEnabled || showKey == null) return@LaunchedEffect
+        delay(VIEW_SAVE_DELAY_MS)
+        val saved = ShowMemory.get(context, showKey)
+        val subtitleDelay = ui.subtitleDelayMs
+        val audioDelay = ui.audioDelayMs
+        if ((saved?.subtitleDelayMs ?: 0L) != subtitleDelay || (saved?.audioDelayMs ?: 0) != audioDelay) {
+            ShowMemory.saveDelays(context, showKey, subtitleDelay, audioDelay)
+        }
     }
     LaunchedEffect(uriKey, ui.transform) {
         if (!viewMemory.ready) return@LaunchedEffect
         delay(VIEW_SAVE_DELAY_MS)
         VideoViewMemory.save(context, uriKey, ui.transform, VideoTransform(fit = viewMemory.baseFit, aspect = viewMemory.baseAspect))
+        if (historyEnabled) ShowMemory.saveView(context, showKey, ui.transform)
     }
     DisposableEffect(uriKey) {
         onDispose {
             if (viewMemory.ready) {
                 VideoViewMemory.save(context, uriKey, ui.transform, VideoTransform(fit = viewMemory.baseFit, aspect = viewMemory.baseAspect))
+                if (historyEnabled) ShowMemory.saveView(context, showKey, ui.transform)
                 val restored = viewMemory.restored
                 if (restored != null) {
                     if (ui.fit == restored.fit) ui.fit = viewMemory.baseFit
@@ -457,6 +599,12 @@ private fun PlayerSession(
             hint = null
         }
     }
+    LaunchedEffect(zoomResetStamp) {
+        if (zoomResetShown) {
+            delay(ZOOM_RESET_MS)
+            zoomResetShown = false
+        }
+    }
     LaunchedEffect(tapFeedback) {
         if (tapFeedback != null) {
             delay(700)
@@ -475,7 +623,7 @@ private fun PlayerSession(
             subtitlesApplied = true
             handoff.activate()
             slot.player = handoff
-            slot.surface?.let { handoff.setSurface(it) }
+            slot.surface?.takeIf { !ui.audioOnly }?.let { handoff.setSurface(it) }
             handoff.play()
             status = handoff.status()
             statusKey = uriKey
@@ -516,7 +664,7 @@ private fun PlayerSession(
                     slot.player = opened
                     player = opened
                     owned = null
-                    slot.surface?.let { opened.setSurface(it) }
+                    slot.surface?.takeIf { !ui.audioOnly }?.let { opened.setSurface(it) }
                     attachSidecars(
                         context,
                         opened,
@@ -676,7 +824,7 @@ private fun PlayerSession(
         }
     }
 
-    val sheetOpen = showQuick || showSpeed || showSubtitles || showAudio || showEqualizer
+    val sheetOpen = (showQuick || showSpeed || showSubtitles || showAudio || showEqualizer) && !SidePanelPin.pinned
     LaunchedEffect(controlsVisible, playing, interaction, scrubFraction, sheetOpen, config.controlsTimeoutSeconds) {
         if (controlsVisible && playing && scrubFraction == null && !sheetOpen && config.controlsTimeoutSeconds > 0) {
             delay(config.controlsTimeoutSeconds * 1000L)
@@ -691,15 +839,29 @@ private fun PlayerSession(
     }
 
     val view = LocalView.current
-    DisposableEffect(playing) {
-        view.keepScreenOn = playing
+    DisposableEffect(playing, minimized) {
+        view.keepScreenOn = playing && !minimized
         onDispose { view.keepScreenOn = false }
     }
 
+    val backgroundPlay = config.backgroundPlay || ui.backgroundSession
+    val latestBackgroundPlay by rememberUpdatedState(backgroundPlay)
+    val latestInPip by rememberUpdatedState(inPip)
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_STOP) currentPlayer?.pause()
+            if (event == Lifecycle.Event.ON_START) ui.backgroundSession = false
+            if (event == Lifecycle.Event.ON_STOP) {
+                val keepPlaying = latestBackgroundPlay &&
+                    NowPlaying.serviceActive.value &&
+                    !latestInPip &&
+                    context.findActivity()?.isFinishing != true
+                if (keepPlaying) {
+                    controlsVisible = false
+                } else {
+                    currentPlayer?.pause()
+                }
+            }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
@@ -764,6 +926,7 @@ private fun PlayerSession(
             info != null -> TrackChoice(info.index, info.language, info.codec)
             else -> null
         }
+        if (historyEnabled) ShowMemory.saveTracks(context, showKey, trackMemory.audio, null)
         saveHistory()
     }
     val rememberSubtitle: (Int?) -> Unit = { index ->
@@ -778,6 +941,7 @@ private fun PlayerSession(
             info != null -> SavedSubtitle(TrackChoice(info.index, info.language, info.codec), null, null)
             else -> null
         }
+        if (historyEnabled) ShowMemory.saveTracks(context, showKey, null, trackMemory.subtitle)
         saveHistory()
     }
     LaunchedEffect(playing, uriKey) {
@@ -824,7 +988,12 @@ private fun PlayerSession(
                             renderer = renderer,
                             preferredAudio = TrackLanguage.preferred(context, prefs.getString(LuckyPrefs.PREFERRED_AUDIO_LANGUAGE, TrackLanguage.FILE_DEFAULT)),
                             autoSubtitles = autoSubtitles,
-                            remembered = if (historyEnabled) WatchHistory.get(context, target.uri)?.tracks else null,
+                            remembered = if (historyEnabled) {
+                                WatchHistory.get(context, target.uri)?.tracks
+                                    ?: ShowMemory.get(context, ShowMemory.keyFor((target.title ?: Uri.parse(target.uri).lastPathSegment)?.substringAfterLast('/')))?.tracks
+                            } else {
+                                null
+                            },
                             apply = { opened -> applySettings(opened) }
                         )
                     )
@@ -912,6 +1081,112 @@ private fun PlayerSession(
         null
     }
 
+    val latestGoNext by rememberUpdatedState(goNext)
+    val latestGoPrevious by rememberUpdatedState(goPrevious)
+    DisposableEffect(Unit) {
+        val controls = object : PlaybackControls {
+            override fun play() {
+                val active = currentPlayer ?: return
+                if (latestStatus.state == PlaybackState.ENDED) active.seekTo(0L)
+                active.play()
+            }
+
+            override fun pause() {
+                currentPlayer?.pause()
+            }
+
+            override fun seekTo(positionMs: Long) {
+                currentPlayer?.seekTo(positionMs)
+            }
+
+            override fun next() {
+                latestGoNext?.invoke()
+            }
+
+            override fun previous() {
+                val back = latestGoPrevious
+                if (back != null) back() else currentPlayer?.seekTo(0L)
+            }
+
+            override fun stop() {
+                currentPlayer?.pause()
+            }
+        }
+        NowPlaying.controls = controls
+        onDispose { if (NowPlaying.controls === controls) NowPlaying.controls = null }
+    }
+
+    val fallbackTitle = stringResource(R.string.app_name)
+    val nowPlayingTitle = remember(uriKey, title) { title ?: displayName(context, uri)?.let { VideoFiles.baseNameOf(it) } } ?: fallbackTitle
+    val latestNowPlayingTitle by rememberUpdatedState(nowPlayingTitle)
+    val latestHasNext by rememberUpdatedState(next != null)
+    val latestHasPrevious by rememberUpdatedState(inQueue)
+    val latestEffectiveSpeed by rememberUpdatedState(effectiveSpeed)
+    fun nowPlayingSnapshot(): NowPlayingState {
+        val current = status
+        return NowPlayingState(
+            uri = uriKey,
+            title = latestNowPlayingTitle,
+            playing = current.state == PlaybackState.PLAYING || current.state == PlaybackState.BUFFERING,
+            positionMs = current.positionMs,
+            durationMs = current.durationMs ?: 0L,
+            speed = latestEffectiveSpeed,
+            hasNext = latestHasNext,
+            hasPrevious = latestHasPrevious,
+            seekable = current.seekable
+        )
+    }
+    LaunchedEffect(player, backgroundPlay) {
+        val active = player ?: return@LaunchedEffect
+        if (!backgroundPlay) return@LaunchedEffect
+        var last: NowPlayingState? = null
+        var lastAt = 0L
+        while (isActive && !active.isReleased) {
+            if (statusKey == uriKey) {
+                val snapshot = nowPlayingSnapshot()
+                val now = SystemClock.elapsedRealtime()
+                val previous = last
+                val changed = previous == null || snapshot.copy(positionMs = 0L) != previous.copy(positionMs = 0L) || run {
+                    val elapsed = if (previous.playing) ((now - lastAt) * previous.speed).toLong() else 0L
+                    abs(snapshot.positionMs - (previous.positionMs + elapsed)) > NOW_PLAYING_DRIFT_MS
+                }
+                if (changed) {
+                    NowPlaying.publish(snapshot)
+                    last = snapshot
+                    lastAt = now
+                }
+            }
+            delay(NOW_PLAYING_POLL_MS)
+        }
+    }
+    LaunchedEffect(backgroundPlay, playing, player) {
+        if (!backgroundPlay || !playing || player == null || NowPlaying.serviceActive.value) return@LaunchedEffect
+        if (!lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) return@LaunchedEffect
+        NowPlaying.publish(nowPlayingSnapshot())
+        NowPlaying.startService(context)
+    }
+
+    val surfaceDetached = remember { BooleanArray(1) }
+    LaunchedEffect(player, ui.audioOnly) {
+        val active = player ?: return@LaunchedEffect
+        if (ui.audioOnly) {
+            active.setSurface(null)
+            surfaceDetached[0] = true
+        } else if (surfaceDetached[0]) {
+            surfaceDetached[0] = false
+            slot.surface?.let {
+                active.setSurface(it)
+                active.redraw()
+            }
+        }
+    }
+
+    LaunchedEffect(player, resumeNotice, statusKey) {
+        if (player == null || resumeNotice == null || statusKey != uriKey) return@LaunchedEffect
+        delay(RESUME_NOTICE_MS)
+        resumeNotice = null
+    }
+
     LaunchedEffect(status.state) {
         if (status.state != PlaybackState.ENDED) return@LaunchedEffect
         val timer = ui.sleepTimer
@@ -941,12 +1216,24 @@ private fun PlayerSession(
         flash(GestureHint.Message(sleepStopped, Icons.Rounded.Bedtime))
     }
 
-    BackHandler {
-        if (ui.locked) {
-            ui.locked = false
-            bump()
-        } else {
-            onClose()
+    BackHandler(enabled = !minimized) {
+        val minimize = onMinimize
+        when {
+            ui.locked -> {
+                ui.locked = false
+                bump()
+            }
+            minimize != null && backgroundPlay && playing && !inPip -> {
+                showQuick = false
+                showSpeed = false
+                showSubtitles = false
+                showAudio = false
+                showEqualizer = false
+                showChapters = false
+                SidePanelPin.pinned = false
+                minimize()
+            }
+            else -> onClose()
         }
     }
 
@@ -1047,7 +1334,11 @@ private fun PlayerSession(
                     config.hdrBoost && ui.hdrContent && !inPip -> 1f
                     else -> systemBrightness(context)
                 }
-                SwipeKind.VOLUME -> scratch.level = volume.level()
+                SwipeKind.VOLUME -> scratch.level = if (ui.volumeBoost > 1f && volume.atMax()) {
+                    1f + (ui.volumeBoost - 1f) / (VOLUME_BOOST_MAX - 1f)
+                } else {
+                    volume.level()
+                }
             }
         }
 
@@ -1070,18 +1361,35 @@ private fun PlayerSession(
                 SwipeKind.BRIGHTNESS -> {
                     scratch.level = (scratch.level - delta / (extent * 0.7f)).coerceIn(0.01f, 1f)
                     ui.brightness = scratch.level
-                    flash(GestureHint.Level(SwipeKind.BRIGHTNESS, scratch.level))
+                    brightnessIndicator = scratch.level
+                    brightnessStamp++
                 }
                 SwipeKind.VOLUME -> {
-                    scratch.level = (scratch.level - delta / (extent * 0.7f)).coerceIn(0f, 1f)
-                    volume.set(scratch.level)
-                    flash(GestureHint.Level(SwipeKind.VOLUME, scratch.level))
+                    scratch.level = (scratch.level - delta / (extent * 0.7f)).coerceIn(0f, 2f)
+                    if (scratch.level <= 1f) {
+                        volume.set(scratch.level)
+                        ui.volumeBoost = 1f
+                    } else {
+                        volume.set(1f)
+                        if (volume.atMax()) {
+                            ui.volumeBoost = (100f + (scratch.level - 1f) * (VOLUME_BOOST_MAX - 1f) * 100f).roundToInt() / 100f
+                        } else {
+                            scratch.level = 1f
+                            ui.volumeBoost = 1f
+                        }
+                    }
+                    volumeIndicator = VolumeIndicator(volume.level(), ui.volumeBoost)
+                    volumeStamp++
                 }
             }
         }
 
         override fun onSwipeEnd(kind: SwipeKind) {
             gestureActive = false
+            if (kind == SwipeKind.VOLUME) {
+                volumeStamp++
+                if (volumeConfig.rememberVolume) prefs.edit().putFloat(LuckyPrefs.PLAYER_VOLUME, volume.level()).apply()
+            }
             if (kind == SwipeKind.SEEK && scratch.target != scratch.startPosition) {
                 currentPlayer?.seekTo(scratch.target, exact = true)
             }
@@ -1094,6 +1402,7 @@ private fun PlayerSession(
             ui.panX += 2f * panX / containerSize.width
             ui.panY += 2f * panY / containerSize.height
             clampPan()
+            zoomResetShown = false
             flash(GestureHint.Zoom((ui.zoom * 100).roundToInt()))
         }
 
@@ -1103,6 +1412,8 @@ private fun PlayerSession(
                 ui.zoom = 1f
                 clampPan()
             }
+            zoomResetShown = ui.zoomed
+            zoomResetStamp++
         }
     }
 
@@ -1288,7 +1599,8 @@ private fun PlayerSession(
         onScreenshot = {
             showQuick = false
             takeScreenshot()
-        }
+        },
+        onAudioOnly = { ui.audioOnly = !ui.audioOnly }
     )
     val subtitleControls = SubtitleControls(
         delayMs = ui.subtitleDelayMs,
@@ -1317,7 +1629,7 @@ private fun PlayerSession(
         normalize = config.audioNormalize,
         preset = config.equalizer.preset,
         onDelay = { ui.audioDelayMs = it },
-        onBoost = { ui.volumeBoost = it.coerceIn(1f, 3f) },
+        onBoost = { ui.volumeBoost = it.coerceIn(1f, VOLUME_BOOST_MAX) },
         onNight = { prefs.edit().putBoolean(LuckyPrefs.AUDIO_NIGHT, it).apply() },
         onDialogue = { prefs.edit().putBoolean(LuckyPrefs.AUDIO_DIALOGUE, it).apply() },
         onNormalize = { prefs.edit().putString(LuckyPrefs.AUDIO_NORMALIZE, (if (it) AudioNormalize.NORMALIZE else AudioNormalize.OFF).name).apply() },
@@ -1330,7 +1642,11 @@ private fun PlayerSession(
     )
     val motionOnText = stringResource(R.string.player_motion_on)
     val motionOffText = stringResource(R.string.player_motion_off)
-    val palette = rememberPlayerPalette(config.iconTint, config.accentTint)
+    val look = config.look
+    val palette = rememberPlayerPalette(look.iconTint, look.accentTint)
+    val chromeStyle = remember(look.buttonStyle, look.playShape, look.glow) { PlayerChromeStyle(look.buttonStyle, look.playShape, look.glow) }
+    val docked = look.layout == ControlsLayout.DOCKED
+    val controlsScale = look.controlsSize.scale
 
     Box(
         Modifier
@@ -1340,13 +1656,21 @@ private fun PlayerSession(
                 containerOrigin = coordinates.positionInWindow()
             }
     ) {
-        if (!status.hasVideo && player != null) {
+        val audioOnlyShown = ui.audioOnly && status.hasVideo
+        if (audioOnlyShown) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(Color.Black)
+            )
+        }
+        if ((!status.hasVideo || audioOnlyShown) && player != null) {
             Column(
                 modifier = Modifier.align(Alignment.Center),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Icon(
-                    Icons.Rounded.MusicNote,
+                    if (audioOnlyShown) Icons.Rounded.Headphones else Icons.Rounded.MusicNote,
                     contentDescription = null,
                     tint = colors.primary,
                     modifier = Modifier.size(if (inPip) 40.dp else 96.dp)
@@ -1362,6 +1686,15 @@ private fun PlayerSession(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.padding(horizontal = 32.dp)
                     )
+                    if (audioOnlyShown) {
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            text = stringResource(R.string.player_audio_only_on),
+                            color = Color.White.copy(alpha = 0.72f),
+                            style = MaterialTheme.typography.labelLarge,
+                            textAlign = TextAlign.Center
+                        )
+                    }
                 }
             }
         }
@@ -1377,6 +1710,7 @@ private fun PlayerSession(
                 videoHeight = status.videoHeight,
                 raised = controlsVisible && !inPip && !ui.locked,
                 style = config.subtitles,
+                raiseBy = if (docked) 168.dp else 120.dp,
                 scale = ui.subtitleScale,
                 assActive = status.assActive,
                 textAss = status.textAss,
@@ -1422,6 +1756,13 @@ private fun PlayerSession(
         if (!inPip) {
             TapSeekRipple(tapFeedback)
             GestureHintOverlay(hint)
+            BrightnessOverlay(brightnessIndicator)
+            VolumeOverlay(volumeIndicator)
+            ZoomResetChip(visible = zoomResetShown && !ui.locked) {
+                ui.resetZoom()
+                zoomResetShown = false
+                flash(GestureHint.Zoom(100))
+            }
             screenshotNotice?.let { notice ->
                 ScreenshotNoticeCard(
                     notice = notice,
@@ -1450,175 +1791,80 @@ private fun PlayerSession(
         }
 
         if (!inPip && ui.locked) {
-            LockedOverlay(
-                visible = lockedHintVisible,
-                onUnlock = {
-                    ui.locked = false
-                    lockedHintVisible = false
-                    bump()
-                },
-                modifier = Modifier
-                    .align(Alignment.CenterStart)
-                    .windowInsetsPadding(WindowInsets.safeDrawing)
-                    .padding(start = 24.dp)
-            )
+            CompositionLocalProvider(LocalPlayerPalette provides palette, LocalPlayerChromeStyle provides chromeStyle) {
+                LockedOverlay(
+                    visible = lockedHintVisible,
+                    onUnlock = {
+                        ui.locked = false
+                        lockedHintVisible = false
+                        bump()
+                    },
+                    modifier = Modifier
+                        .align(Alignment.CenterStart)
+                        .windowInsetsPadding(WindowInsets.safeDrawing)
+                        .padding(start = 24.dp)
+                )
+            }
         }
 
         AnimatedVisibility(
             visible = !inPip && ((controlsVisible && !ui.locked) || errorMessage != null),
-            enter = fadeIn(),
-            exit = fadeOut(),
+            enter = fadeIn(tween(220)),
+            exit = fadeOut(tween(200)),
             modifier = Modifier.fillMaxSize()
         ) {
-            CompositionLocalProvider(LocalPlayerPalette provides palette) {
+            val visibility = this
+            CompositionLocalProvider(LocalPlayerPalette provides palette, LocalPlayerChromeStyle provides chromeStyle) {
                 Box(Modifier.fillMaxSize()) {
-                    Box(
-                        Modifier
-                            .fillMaxSize()
-                            .background(
-                                Brush.verticalGradient(
-                                    0f to Color.Black.copy(alpha = 0.62f),
-                                    0.22f to Color.Transparent,
-                                    0.62f to Color.Transparent,
-                                    1f to Color.Black.copy(alpha = 0.75f)
-                                )
-                            )
-                    )
-                    Column(
+                    PlayerScrim(look.scrim, docked)
+                    BoxWithConstraints(
                         Modifier
                             .fillMaxSize()
                             .windowInsetsPadding(WindowInsets.safeDrawing)
                     ) {
-                        val clock = if (config.showClock) rememberClockText(context, controlsVisible) else null
-                        PlayerTopBar(
-                            title = title,
-                            subtitle = listOfNotNull(
-                                chapterTitle,
-                                if (inQueue) stringResource(R.string.player_queue_position, queueIndex + 1, queueSize) else null
-                            ).joinToString(" · ").ifEmpty { null },
-                            clock = clock,
-                            onBack = onClose,
-                            onChapters = if (status.chapters.size > 1) {
-                                {
-                                    showChapters = true
-                                    bump()
-                                }
-                            } else {
-                                null
-                            },
-                            onSubtitles = if (player != null && status.hasVideo) {
-                                {
-                                    showSubtitles = true
-                                    bump()
-                                }
-                            } else {
-                                null
-                            },
-                            subtitlesOn = status.selectedSubtitle != null,
-                            onAudio = if (player != null && (status.audioCodec != null || status.audioTracks.isNotEmpty())) {
-                                {
-                                    showAudio = true
-                                    bump()
-                                }
-                            } else {
-                                null
-                            },
-                            onQuickSettings = {
-                                showQuick = true
-                                bump()
-                            },
-                            onStats = {
-                                showStats = !showStats
-                                bump()
-                            }
-                        )
-                        BoxWithConstraints(
-                            Modifier
-                                .weight(1f)
-                                .fillMaxWidth()
-                        ) {
-                            val stepsAvailable = errorMessage == null && player != null && status.hasVideo && status.state == PlaybackState.PAUSED
-                            val stepsBelow = stepsAvailable && maxHeight >= 188.dp * config.controlsSize.scale
-                            val stepsInline = stepsAvailable && !stepsBelow && maxWidth >= 600.dp
-                            val stepBack: () -> Unit = {
-                                currentPlayer?.stepFrame(false)
-                                bump()
-                            }
-                            val stepForward: () -> Unit = {
-                                currentPlayer?.stepFrame(true)
-                                bump()
-                            }
-                            if (errorMessage == null && player != null) {
-                                PlayerCenterControls(
-                                    state = status.state,
-                                    scale = config.controlsSize.scale,
-                                    seekStepMs = config.seekStepMs,
-                                    showSeekButtons = config.seekButtons,
-                                    onToggle = {
-                                        togglePlayback()
-                                        bump()
-                                    },
-                                    onRewind = {
-                                        skip(-config.seekStepMs)
-                                        bump()
-                                    },
-                                    onForward = {
-                                        skip(config.seekStepMs)
-                                        bump()
-                                    },
-                                    onPrevious = goPrevious?.let { action -> { action(); bump() } },
-                                    onNext = if (inQueue) goNext?.let { action -> { action(); bump() } } else null,
-                                    modifier = Modifier.align(Alignment.Center),
-                                    onStepBack = if (stepsInline) stepBack else null,
-                                    onStepForward = if (stepsInline) stepForward else null
-                                )
-                            }
-                            if (stepsBelow) {
-                                PlayerStepControls(
-                                    scale = config.controlsSize.scale,
-                                    onStepBack = stepBack,
-                                    onStepForward = stepForward,
-                                    modifier = Modifier
-                                        .align(Alignment.BottomCenter)
-                                        .padding(bottom = 6.dp)
-                                )
-                            }
-                            if (showStats && player != null) {
-                                StatsPanel(
-                                    status = status,
-                                    speed = effectiveSpeed,
-                                    upscaler = ui.upscaler,
-                                    downscaler = ui.downscaler,
-                                    preferHardware = preferHardware,
-                                    onDecoderChange = { hardware ->
-                                        if (hardware != preferHardware) {
-                                            resumeAtMs = status.positionMs
-                                            prefs.edit().putBoolean(LuckyPrefs.HARDWARE_DECODING, hardware).apply()
-                                            preferHardware = hardware
-                                        }
-                                        bump()
-                                    },
-                                    renderer = renderer,
-                                    onRendererChange = { choice ->
-                                        if (choice != renderer) {
-                                            resumeAtMs = status.positionMs
-                                            prefs.edit().putString(LuckyPrefs.RENDERER, choice.name).apply()
-                                            renderer = choice
-                                        }
-                                        bump()
-                                    },
-                                    modifier = Modifier
-                                        .align(Alignment.TopEnd)
-                                        .padding(12.dp)
-                                )
-                            }
+                        val compact = maxWidth < 420.dp
+                        val wide = maxWidth >= 600.dp
+                        val chromeReady = errorMessage == null && player != null
+                        val stepsAvailable = chromeReady && status.hasVideo && status.state == PlaybackState.PAUSED
+                        val stepBack: () -> Unit = {
+                            currentPlayer?.stepFrame(false)
+                            bump()
                         }
-                        if (errorMessage == null && player != null) {
+                        val stepForward: () -> Unit = {
+                            currentPlayer?.stepFrame(true)
+                            bump()
+                        }
+                        val onToggle: () -> Unit = {
+                            togglePlayback()
+                            bump()
+                        }
+                        val onRewind: () -> Unit = {
+                            skip(-config.seekStepMs)
+                            bump()
+                        }
+                        val onForward: () -> Unit = {
+                            skip(config.seekStepMs)
+                            bump()
+                        }
+                        val onPrevious: (() -> Unit)? = goPrevious?.let { action -> { action(); bump() } }
+                        val onNext: (() -> Unit)? = if (inQueue) goNext?.let { action -> { action(); bump() } } else null
+                        val quickState = QuickButtonState(
+                            speed = ui.speed,
+                            aspectActive = ui.aspect > 0f || ui.zoomed,
+                            repeat = ui.repeat,
+                            mirror = ui.mirror,
+                            rotated = ui.manualOrientation != null,
+                            loopStartMs = ui.loopStartMs,
+                            loopEndMs = ui.loopEndMs,
+                            interpolating = ui.smoothMotion == SmoothMotion.INTERPOLATE
+                        )
+                        val seekRow: @Composable () -> Unit = {
                             PlayerSeekRow(
                                 status = status,
                                 scrubFraction = scrubFraction,
                                 showRemaining = showRemaining,
-                                style = config.seekStyle,
+                                style = look.seekStyle,
+                                timeLayout = look.timeLayout,
                                 onToggleRemaining = {
                                     showRemaining = !showRemaining
                                     prefs.edit().putBoolean(LuckyPrefs.PLAYER_SHOW_REMAINING, showRemaining).apply()
@@ -1651,12 +1897,14 @@ private fun PlayerSession(
                                 loopStartMs = ui.loopStartMs,
                                 loopEndMs = ui.loopEndMs
                             )
+                        }
+                        val quickRow: @Composable (Modifier, Alignment) -> Unit = { rowModifier, rowAlignment ->
                             PlayerQuickButtons(
                                 buttons = config.quickButtons,
-                                ui = ui,
+                                order = config.quickOrder,
+                                state = quickState,
                                 pipAvailable = pipAvailable && status.hasVideo,
                                 screenshotAvailable = status.hasVideo,
-                                interpolating = ui.smoothMotion == SmoothMotion.INTERPOLATE,
                                 onMotion = {
                                     val enable = ui.smoothMotion != SmoothMotion.INTERPOLATE
                                     ui.smoothMotion = if (enable) {
@@ -1701,36 +1949,271 @@ private fun PlayerSession(
                                     bump()
                                 },
                                 onPip = onEnterPip,
+                                onBackground = {
+                                    val active = currentPlayer
+                                    if (active != null && !active.isReleased) {
+                                        ui.backgroundSession = true
+                                        if (!playing) active.play()
+                                        scope.launch {
+                                            withTimeoutOrNull(BACKGROUND_SERVICE_WAIT_MS) { NowPlaying.serviceActive.first { it } }
+                                            delay(BACKGROUND_LEAVE_DELAY_MS)
+                                            context.findActivity()?.moveTaskToBack(true)
+                                        }
+                                    }
+                                },
                                 onLoop = cycleLoop,
                                 onScreenshot = {
                                     takeScreenshot()
                                     bump()
                                 },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(bottom = 6.dp)
+                                modifier = rowModifier,
+                                alignment = rowAlignment
                             )
                         }
-                    }
-                    if (errorMessage == null && player != null && QuickButton.LOCK.key in config.quickButtons) {
-                        PlayerSideLock(
-                            onLock = {
-                                ui.locked = true
-                                controlsVisible = false
-                                lockedHintVisible = true
-                                interaction++
-                                flash(GestureHint.Message(lockedText, Icons.Rounded.Lock))
-                            },
-                            modifier = Modifier
-                                .align(Alignment.CenterEnd)
-                                .windowInsetsPadding(WindowInsets.safeDrawing)
-                                .padding(end = 16.dp)
-                        )
+                        Column(Modifier.fillMaxSize()) {
+                            val clock = if (config.showClock) rememberClockText(context, controlsVisible) else null
+                            PlayerTopBar(
+                                title = title,
+                                subtitle = listOfNotNull(
+                                    chapterTitle,
+                                    if (inQueue) stringResource(R.string.player_queue_position, queueIndex + 1, queueSize) else null
+                                ).joinToString(" · ").ifEmpty { null },
+                                clock = clock,
+                                compact = compact,
+                                onBack = onClose,
+                                onChapters = if (status.chapters.size > 1 && TopButton.CHAPTERS.key in config.topButtons) {
+                                    {
+                                        showChapters = true
+                                        bump()
+                                    }
+                                } else {
+                                    null
+                                },
+                                onSubtitles = if (player != null && status.hasVideo && TopButton.SUBTITLES.key in config.topButtons) {
+                                    {
+                                        showSubtitles = true
+                                        bump()
+                                    }
+                                } else {
+                                    null
+                                },
+                                subtitlesOn = status.selectedSubtitle != null,
+                                onAudio = if (player != null && (status.audioCodec != null || status.audioTracks.isNotEmpty()) && TopButton.AUDIO.key in config.topButtons) {
+                                    {
+                                        showAudio = true
+                                        bump()
+                                    }
+                                } else {
+                                    null
+                                },
+                                onQuickSettings = {
+                                    showQuick = true
+                                    bump()
+                                },
+                                onStats = if (TopButton.STATS.key in config.topButtons || showStats) {
+                                    {
+                                        showStats = !showStats
+                                        bump()
+                                    }
+                                } else {
+                                    null
+                                },
+                                statsOn = showStats,
+                                modifier = with(visibility) { chromeMotion(look.motion, ChromeEdge.TOP) }
+                            )
+                            BoxWithConstraints(
+                                Modifier
+                                    .weight(1f)
+                                    .fillMaxWidth()
+                            ) {
+                                if (!docked) {
+                                    val stepsBelow = stepsAvailable && maxHeight >= 196.dp * controlsScale
+                                    val stepsInline = stepsAvailable && !stepsBelow && maxWidth >= 600.dp
+                                    if (chromeReady) {
+                                        PlayerCenterControls(
+                                            state = status.state,
+                                            scale = controlsScale,
+                                            seekStepMs = config.seekStepMs,
+                                            showSeekButtons = config.seekButtons,
+                                            onToggle = onToggle,
+                                            onRewind = onRewind,
+                                            onForward = onForward,
+                                            onPrevious = onPrevious,
+                                            onNext = onNext,
+                                            modifier = Modifier
+                                                .align(Alignment.Center)
+                                                .then(with(visibility) { chromeMotion(look.motion, ChromeEdge.CENTER) }),
+                                            onStepBack = if (stepsInline) stepBack else null,
+                                            onStepForward = if (stepsInline) stepForward else null,
+                                            compact = maxWidth < 360.dp
+                                        )
+                                    }
+                                    if (stepsBelow) {
+                                        PlayerStepControls(
+                                            scale = controlsScale,
+                                            onStepBack = stepBack,
+                                            onStepForward = stepForward,
+                                            modifier = Modifier
+                                                .align(Alignment.BottomCenter)
+                                                .padding(bottom = 6.dp)
+                                        )
+                                    }
+                                } else if (stepsAvailable && !wide) {
+                                    PlayerStepControls(
+                                        scale = controlsScale,
+                                        onStepBack = stepBack,
+                                        onStepForward = stepForward,
+                                        modifier = Modifier
+                                            .align(Alignment.BottomCenter)
+                                            .padding(bottom = 10.dp)
+                                    )
+                                }
+                                if (showStats && player != null) {
+                                    StatsPanel(
+                                        status = status,
+                                        speed = effectiveSpeed,
+                                        upscaler = ui.upscaler,
+                                        downscaler = ui.downscaler,
+                                        preferHardware = preferHardware,
+                                        onDecoderChange = { hardware ->
+                                            if (hardware != preferHardware) {
+                                                resumeAtMs = status.positionMs
+                                                prefs.edit().putBoolean(LuckyPrefs.HARDWARE_DECODING, hardware).apply()
+                                                preferHardware = hardware
+                                            }
+                                            bump()
+                                        },
+                                        renderer = renderer,
+                                        onRendererChange = { choice ->
+                                            if (choice != renderer) {
+                                                resumeAtMs = status.positionMs
+                                                prefs.edit().putString(LuckyPrefs.RENDERER, choice.name).apply()
+                                                renderer = choice
+                                            }
+                                            bump()
+                                        },
+                                        modifier = Modifier
+                                            .align(Alignment.TopEnd)
+                                            .padding(12.dp)
+                                    )
+                                }
+                            }
+                            if (chromeReady && docked) {
+                                PlayerPanel(
+                                    Modifier
+                                        .then(with(visibility) { chromeMotion(look.motion, ChromeEdge.BOTTOM) })
+                                        .padding(start = 12.dp, end = 12.dp, bottom = 8.dp)
+                                        .fillMaxWidth()
+                                ) {
+                                    Column(
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .padding(top = 6.dp, bottom = 4.dp)
+                                    ) {
+                                        seekRow()
+                                        if (wide) {
+                                            Row(
+                                                Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(horizontal = 6.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                PlayerCenterControls(
+                                                    state = status.state,
+                                                    scale = controlsScale,
+                                                    seekStepMs = config.seekStepMs,
+                                                    showSeekButtons = config.seekButtons,
+                                                    onToggle = onToggle,
+                                                    onRewind = onRewind,
+                                                    onForward = onForward,
+                                                    onPrevious = onPrevious,
+                                                    onNext = onNext,
+                                                    onStepBack = if (stepsAvailable) stepBack else null,
+                                                    onStepForward = if (stepsAvailable) stepForward else null,
+                                                    docked = true
+                                                )
+                                                quickRow(Modifier.weight(1f), Alignment.CenterEnd)
+                                            }
+                                        } else {
+                                            PlayerCenterControls(
+                                                state = status.state,
+                                                scale = controlsScale,
+                                                seekStepMs = config.seekStepMs,
+                                                showSeekButtons = config.seekButtons,
+                                                onToggle = onToggle,
+                                                onRewind = onRewind,
+                                                onForward = onForward,
+                                                onPrevious = onPrevious,
+                                                onNext = onNext,
+                                                modifier = Modifier.align(Alignment.CenterHorizontally),
+                                                compact = compact,
+                                                docked = true
+                                            )
+                                            quickRow(Modifier.fillMaxWidth(), Alignment.Center)
+                                        }
+                                    }
+                                }
+                            } else if (chromeReady) {
+                                Column(
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .then(with(visibility) { chromeMotion(look.motion, ChromeEdge.BOTTOM) })
+                                ) {
+                                    seekRow()
+                                    quickRow(
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .padding(bottom = 6.dp),
+                                        Alignment.CenterEnd
+                                    )
+                                }
+                            }
+                        }
+                        if (chromeReady && QuickButton.LOCK.key in config.quickButtons) {
+                            PlayerSideLock(
+                                onLock = {
+                                    ui.locked = true
+                                    controlsVisible = false
+                                    lockedHintVisible = true
+                                    interaction++
+                                    flash(GestureHint.Message(lockedText, Icons.Rounded.Lock))
+                                },
+                                modifier = Modifier
+                                    .align(Alignment.CenterEnd)
+                                    .padding(end = 16.dp)
+                            )
+                        }
                     }
                 }
             }
         }
 
+        if (!inPip && !ui.locked && errorMessage == null && player != null) {
+            ResumeNotice(
+                resumedFromMs = resumeNotice.takeIf { statusKey == uriKey },
+                raised = controlsVisible,
+                onStartOver = {
+                    currentPlayer?.seekTo(0L)
+                    resumeNotice = null
+                    bump()
+                },
+                modifier = Modifier.align(Alignment.BottomStart)
+            )
+            SkipSegmentButton(
+                segment = skipSegmentAt(status.chapters, status.positionMs, status.durationMs),
+                raised = controlsVisible,
+                hasNext = goNext != null,
+                onSkip = { segment ->
+                    val target = segment.endMs
+                    if (target != null) {
+                        currentPlayer?.seekTo(target)
+                    } else {
+                        goNext?.invoke()
+                    }
+                },
+                modifier = Modifier.align(Alignment.BottomEnd)
+            )
+        }
         if (errorMessage != null && !inPip) {
             ErrorPanel(
                 message = errorMessage,
@@ -1769,11 +2252,13 @@ private fun PlayerSession(
         )
     }
     if (showQuick && !inPip) {
-        QuickSettingsSheet(
+        QuickSettingsPanel(
             ui = ui,
             panLimits = panLimitsFor(containerSize.width.toFloat(), containerSize.height.toFloat(), ui.videoShape, ui.transform),
             hdrSupported = caps.hdr10,
             actions = quickActions,
+            tab = quickTab,
+            onTab = { quickTab = it },
             scrollState = quickScrollState,
             onDismiss = { showQuick = false }
         )

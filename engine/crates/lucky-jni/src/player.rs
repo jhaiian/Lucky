@@ -535,8 +535,6 @@ pub extern "system" fn Java_com_jhaiian_lucky_engine_LuckyEngine_nativePlayerSet
     _this: JObject<'caller>,
     handle: jlong,
     level: jint,
-    protection: jint,
-    scene: jint,
     target: jint,
     fps: jint,
     anime: jboolean,
@@ -547,8 +545,6 @@ pub extern "system" fn Java_com_jhaiian_lucky_engine_LuckyEngine_nativePlayerSet
         .with_env(|_env| -> jni::errors::Result<_> {
             let settings = MotionSettings {
                 level: level.clamp(0, 3) as u8,
-                protection: protection.clamp(0, 3) as u8,
-                scene: scene.clamp(0, 2) as u8,
                 target: target.clamp(0, 5) as u8,
                 fps: fps.clamp(0, 1000) as u16,
                 anime,

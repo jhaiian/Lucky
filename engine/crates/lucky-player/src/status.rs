@@ -58,6 +58,7 @@ pub struct Status {
     pub smooth_blending: bool,
     pub learned_cost: f32,
     pub motion_level: u8,
+    pub motion_scale: u8,
     pub output_fps: f32,
     pub learned_motion: u8,
     pub active_kernel: i32,

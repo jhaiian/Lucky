@@ -43,7 +43,14 @@ object LibraryFolders {
 
     fun describe(context: Context, treeUri: Uri, internalLabel: String, externalLabel: String): VideoFolder {
         runCatching {
-            context.contentResolver.takePersistableUriPermission(treeUri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            context.contentResolver.takePersistableUriPermission(
+                treeUri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            )
+        }.onFailure {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(treeUri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
         }
         val documentId = runCatching { DocumentsContract.getTreeDocumentId(treeUri) }.getOrNull()
         val name = documentId?.let { id ->
@@ -63,7 +70,14 @@ object LibraryFolders {
 
     fun release(context: Context, folder: VideoFolder) {
         runCatching {
-            context.contentResolver.releasePersistableUriPermission(folder.uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            context.contentResolver.releasePersistableUriPermission(
+                folder.uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            )
+        }.onFailure {
+            runCatching {
+                context.contentResolver.releasePersistableUriPermission(folder.uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
         }
     }
 

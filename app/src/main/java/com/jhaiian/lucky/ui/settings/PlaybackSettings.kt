@@ -52,7 +52,6 @@ import androidx.compose.ui.unit.dp
 import com.jhaiian.lucky.R
 import com.jhaiian.lucky.data.LuckyPrefs
 import com.jhaiian.lucky.data.TrackLanguage
-import com.jhaiian.lucky.engine.ArtifactProtection
 import com.jhaiian.lucky.engine.Deinterlace
 import com.jhaiian.lucky.engine.Downscaler
 import com.jhaiian.lucky.engine.HdrOutput
@@ -60,7 +59,6 @@ import com.jhaiian.lucky.engine.MotionQuality
 import com.jhaiian.lucky.engine.MotionTarget
 import com.jhaiian.lucky.engine.RefreshMatch
 import com.jhaiian.lucky.engine.RendererPreference
-import com.jhaiian.lucky.engine.SceneSensitivity
 import com.jhaiian.lucky.engine.SmoothMotion
 import com.jhaiian.lucky.engine.ScaleFilter
 import com.jhaiian.lucky.engine.ScaleTier
@@ -220,19 +218,6 @@ private fun FrameRateSlider(fps: Int, maxFps: Int, active: Boolean, onChange: (I
     }
 }
 
-private fun protectionLabel(option: ArtifactProtection): Int = when (option) {
-    ArtifactProtection.OFF -> R.string.motion_level_off
-    ArtifactProtection.LOW -> R.string.motion_level_low
-    ArtifactProtection.MEDIUM -> R.string.motion_level_medium
-    ArtifactProtection.STRONG -> R.string.motion_level_strong
-}
-
-private fun sceneLabel(option: SceneSensitivity): Int = when (option) {
-    SceneSensitivity.LOW -> R.string.motion_level_low
-    SceneSensitivity.MEDIUM -> R.string.motion_level_medium
-    SceneSensitivity.HIGH -> R.string.motion_level_high
-}
-
 @Composable
 private fun SubHeader(text: String) {
     Text(
@@ -322,8 +307,6 @@ internal fun PlaybackSettings(onBack: () -> Unit, modifier: Modifier = Modifier)
         LuckyPrefs.MOTION_TARGET_FPS,
         MotionTarget.legacyFps(LuckyPrefs.get(LocalContext.current).getString(LuckyPrefs.MOTION_TARGET, null)) ?: MotionTarget.DEFAULT_FPS
     )
-    val motionProtection = rememberStringPref(LuckyPrefs.MOTION_PROTECTION, ArtifactProtection.MEDIUM.name)
-    val motionScene = rememberStringPref(LuckyPrefs.MOTION_SCENE, SceneSensitivity.MEDIUM.name)
     val motionAnime = rememberBooleanPref(LuckyPrefs.MOTION_ANIME, false)
     val motionLowFps = rememberBooleanPref(LuckyPrefs.MOTION_LOW_FPS_ONLY, false)
     val motionBattery = rememberBooleanPref(LuckyPrefs.MOTION_BATTERY_SAVER, true)
@@ -524,41 +507,6 @@ internal fun PlaybackSettings(onBack: () -> Unit, modifier: Modifier = Modifier)
                         title = stringResource(R.string.motion_target),
                         subtitle = motionTargetLabel(MotionTarget.parse(motionTarget.value), motionTargetFps.value),
                         onClick = { showTargetDialog = true }
-                    )
-                    RowDivider()
-                    SubHeader(stringResource(R.string.motion_protection))
-                    Text(
-                        text = stringResource(R.string.motion_protection_note),
-                        color = LocalLuckyColors.current.secondaryText,
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.padding(horizontal = 12.dp)
-                    )
-                    val protection = ArtifactProtection.parse(motionProtection.value)
-                    ChoiceTiles(
-                        options = ArtifactProtection.entries.map { stringResource(protectionLabel(it)) },
-                        selected = protection.ordinal,
-                        onSelect = { index ->
-                            haptics.tick()
-                            motionProtection.update(ArtifactProtection.entries[index].name)
-                        },
-                        modifier = Modifier.padding(4.dp)
-                    )
-                    SubHeader(stringResource(R.string.motion_scene))
-                    Text(
-                        text = stringResource(R.string.motion_scene_note),
-                        color = LocalLuckyColors.current.secondaryText,
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.padding(horizontal = 12.dp)
-                    )
-                    val scene = SceneSensitivity.parse(motionScene.value)
-                    ChoiceTiles(
-                        options = SceneSensitivity.entries.map { stringResource(sceneLabel(it)) },
-                        selected = scene.ordinal,
-                        onSelect = { index ->
-                            haptics.tick()
-                            motionScene.update(SceneSensitivity.entries[index].name)
-                        },
-                        modifier = Modifier.padding(4.dp)
                     )
                     RowDivider()
                     SettingsSwitchRow(

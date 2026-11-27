@@ -6,7 +6,9 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -68,10 +70,12 @@ import com.jhaiian.lucky.ui.components.LocalBottomContentPadding
 import com.jhaiian.lucky.ui.components.LuckyIconButton
 import com.jhaiian.lucky.ui.components.SectionHeader
 import com.jhaiian.lucky.ui.components.VerticalScrollbar
+import com.jhaiian.lucky.ui.components.rememberHaptics
 import com.jhaiian.lucky.ui.library.LibraryCategory
 import com.jhaiian.lucky.ui.library.LibraryTileView
 import com.jhaiian.lucky.ui.library.StaticFraction
 import com.jhaiian.lucky.ui.library.TileFrame
+import com.jhaiian.lucky.ui.library.VideoActionsHost
 import com.jhaiian.lucky.ui.library.ViewMode
 import com.jhaiian.lucky.ui.library.fixedHeight
 import com.jhaiian.lucky.ui.library.folderGroups
@@ -94,6 +98,7 @@ private fun matches(item: VideoItem, terms: List<String>): Boolean {
     return terms.all { haystack.contains(it) }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun SearchScreen(
     onPlay: (String, String?) -> Unit,
@@ -134,6 +139,8 @@ fun SearchScreen(
     val listState = rememberLazyListState()
     val focusManager = LocalFocusManager.current
     val focusRequester = remember { FocusRequester() }
+    val haptics = rememberHaptics()
+    var actionTarget by remember { mutableStateOf<VideoItem?>(null) }
 
     Box(
         modifier
@@ -259,7 +266,15 @@ fun SearchScreen(
                                 fraction = StaticFraction,
                                 modifier = Modifier
                                     .fixedHeight(videoRowHeight)
-                                    .clickable {
+                                    .combinedClickable(
+                                        onLongClick = {
+                                            results.firstOrNull { it.uri == tile.id }?.let { video ->
+                                                focusManager.clearFocus()
+                                                haptics.longPress()
+                                                actionTarget = video
+                                            }
+                                        }
+                                    ) {
                                         focusManager.clearFocus()
                                         PlayQueue.set(videoResultTiles.map { item -> QueueItem(item.id, item.title) })
                                         onPlay(tile.id, tile.title)
@@ -271,5 +286,13 @@ fun SearchScreen(
             }
         }
         if (showScrollbar) VerticalScrollbar(listState, colors.primary, topPadding = top, bottomPadding = bottom)
+        VideoActionsHost(
+            target = actionTarget,
+            onDismiss = { actionTarget = null },
+            onPlay = { video ->
+                PlayQueue.set(videoResultTiles.map { item -> QueueItem(item.id, item.title) })
+                onPlay(video.uri, video.title)
+            }
+        )
     }
 }

@@ -98,8 +98,6 @@ pub struct DisplayOptions {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct MotionSettings {
     pub level: u8,
-    pub protection: u8,
-    pub scene: u8,
     pub target: u8,
     pub fps: u16,
     pub anime: bool,
@@ -110,9 +108,26 @@ pub struct MotionSettings {
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub struct MotionConfig {
     pub level: u8,
-    pub protection: u8,
-    pub scene: u8,
+    pub shrink: u8,
     pub hint_fps: f32,
+}
+
+impl MotionConfig {
+    pub const MAX_SHRINK: u8 = 2;
+
+    pub fn scale(&self) -> f32 {
+        match self.shrink {
+            0 => 1.0,
+            1 => 0.75,
+            _ => 0.6,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct Ahead<'a> {
+    pub frame: &'a VideoFrame,
+    pub frames_left: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
@@ -147,6 +162,9 @@ pub trait Presenter: Send + 'static {
     }
     fn present_blend(&mut self, from: &VideoFrame, to: &VideoFrame, weight: f32, delay_us: i64) -> bool {
         self.present_at(if weight >= 0.5 { to } else { from }, delay_us)
+    }
+    fn present_blend_ahead(&mut self, from: &VideoFrame, to: &VideoFrame, weight: f32, delay_us: i64, _ahead: Ahead<'_>) -> bool {
+        self.present_blend(from, to, weight, delay_us)
     }
     fn active_scaling(&self) -> ActiveScaling {
         ActiveScaling::default()
@@ -246,6 +264,7 @@ struct RenderLoop<P: Presenter> {
     blends_in_window: u32,
     motion: MotionSettings,
     motion_level: u8,
+    motion_shrink: u8,
     motion_strained: u32,
     motion_relaxed: u32,
     motion_upgrade_after: u32,
@@ -253,6 +272,7 @@ struct RenderLoop<P: Presenter> {
     duplicate_streak: u32,
     interpolated_in_window: u32,
     output_interval_ns: i64,
+    phase_anchor: (i64, i64),
 }
 
 impl<P: Presenter> RenderLoop<P> {
@@ -401,6 +421,7 @@ impl<P: Presenter> RenderLoop<P> {
             status.smooth_blending = self.blends_in_window > 0;
             let interpolating = self.interpolated_in_window > 0;
             status.motion_level = if interpolating { self.motion_level } else { 0 };
+            status.motion_scale = if interpolating { (self.motion_config.scale() * 100.0).round() as u8 } else { 0 };
             status.output_fps =
                 if interpolating && self.output_interval_ns > 0 { 1_000_000_000.0 / self.output_interval_ns as f32 } else { 0.0 };
             drop(status);
@@ -436,39 +457,63 @@ impl<P: Presenter> RenderLoop<P> {
     }
 
     fn guard_motion(&mut self, average_us: f64) -> bool {
-        if self.smooth != 3 || self.interpolated_in_window == 0 || self.motion.level != 0 {
+        if self.smooth != 3 || self.interpolated_in_window == 0 {
             return false;
         }
         if self.warmup_windows > 0 || self.paused {
             return false;
         }
+        let automatic = self.motion.level == 0;
         let budget = (self.output_interval_ns as f64 / 1_000.0).max(4_000.0);
-        let strained = average_us > budget * 0.6;
-        let relaxed = average_us < budget * 0.3;
-        if strained {
+        let peak_us = self.render_peak_us as f64;
+        let strained = average_us > budget * 0.6 || peak_us > budget * 1.2;
+        let overloaded = average_us > budget * 0.8 || peak_us > budget * 1.5;
+        let relaxed = average_us < budget * 0.3 && peak_us < budget * 0.8;
+        let roomy = average_us < budget * 0.45 && peak_us < budget * 0.9;
+        let lower_level = automatic && self.motion_level > 1 && strained;
+        let shrink = !lower_level && overloaded && self.motion_shrink < MotionConfig::MAX_SHRINK;
+        if lower_level || shrink {
             self.motion_relaxed = 0;
             self.motion_strained += 1;
-            if self.motion_level > 1 {
-                if self.motion_strained >= 2 {
-                    self.motion_strained = 0;
-                    self.motion_upgrade_after = (self.motion_upgrade_after * 2).min(160);
+            if self.motion_strained >= 2 {
+                self.motion_strained = 0;
+                self.motion_upgrade_after = (self.motion_upgrade_after * 2).min(160);
+                if lower_level {
                     self.set_motion_level(self.motion_level - 1);
+                } else {
+                    self.set_motion_shrink(self.motion_shrink + 1);
                 }
-                return true;
             }
-            return false;
+            return true;
         }
         self.motion_strained = 0;
-        if relaxed && self.motion_level < 3 {
+        let grow = self.motion_shrink > 0 && roomy;
+        let raise = self.motion_shrink == 0 && automatic && self.motion_level < 3 && relaxed;
+        if grow || raise {
             self.motion_relaxed += 1;
             if self.motion_relaxed >= self.motion_upgrade_after {
                 self.motion_relaxed = 0;
-                self.set_motion_level(self.motion_level + 1);
+                if grow {
+                    self.set_motion_shrink(self.motion_shrink - 1);
+                } else {
+                    self.set_motion_level(self.motion_level + 1);
+                }
             }
         } else {
             self.motion_relaxed = 0;
         }
         false
+    }
+
+    fn set_motion_shrink(&mut self, shrink: u8) {
+        let shrink = shrink.min(MotionConfig::MAX_SHRINK);
+        if shrink == self.motion_shrink {
+            return;
+        }
+        log::info!("motion interpolation resolution step {} -> {shrink}", self.motion_shrink);
+        self.motion_shrink = shrink;
+        self.reset_frame_stats();
+        self.apply_motion(Some(self.motion_config.hint_fps));
     }
 
     fn set_motion_level(&mut self, level: u8) {
@@ -486,7 +531,7 @@ impl<P: Presenter> RenderLoop<P> {
     fn apply_motion(&mut self, hint_fps: Option<f32>) {
         let level = if self.smooth == 3 && hint_fps.is_some() { self.motion_level } else { 0 };
         let hint_fps = hint_fps.unwrap_or(0.0);
-        let config = MotionConfig { level, protection: self.motion.protection, scene: self.motion.scene, hint_fps };
+        let config = MotionConfig { level, shrink: self.motion_shrink, hint_fps };
         if config != self.motion_config {
             self.motion_config = config;
             self.presenter.set_motion(config);
@@ -515,6 +560,21 @@ impl<P: Presenter> RenderLoop<P> {
             5 => self.motion.fps as f32,
             _ => 0.0,
         }
+    }
+
+    fn phase_media(&self, target_ns: i64, measured: i64, period_ns: i64, rate: f64, frame_us: f64) -> i64 {
+        let (anchor_ns, anchor_media) = self.phase_anchor;
+        if anchor_ns <= 0 || anchor_ns != self.last_blend_vsync || target_ns <= anchor_ns || period_ns <= 0 {
+            return measured;
+        }
+        let vsyncs = ((target_ns - anchor_ns) as f64 / period_ns as f64).round().max(1.0);
+        let predicted = anchor_media + (vsyncs * period_ns as f64 / 1_000.0 * rate) as i64;
+        let error = measured - predicted;
+        let limit = (frame_us * rate * 0.75).clamp(8_000.0, 50_000.0) as i64;
+        if error.abs() > limit {
+            return measured;
+        }
+        predicted + error / 12
     }
 
     fn count_missed(&self, target_ns: i64, interval_ns: i64) {
@@ -579,7 +639,8 @@ impl<P: Presenter> RenderLoop<P> {
             self.update_position(now);
             return Some(Duration::from_micros((target_delay - lead_us).clamp(1_000, 20_000) as u64));
         }
-        let media_at_target = now + (target_delay as f64 * rate) as i64;
+        let measured = now + (target_delay as f64 * rate) as i64;
+        let media_at_target = self.phase_media(target_ns, measured, period_ns, rate, frame_us);
         if media_at_target >= frame_pts {
             if self.shared.video_frames.front_pts(self.serial).is_some() {
                 self.last = self.pending.take();
@@ -590,6 +651,7 @@ impl<P: Presenter> RenderLoop<P> {
             self.count_missed(target_ns, interval_ns);
             self.pure_present = true;
             self.last_blend_vsync = target_ns;
+            self.phase_anchor = (target_ns, media_at_target);
             self.show_at(frame, target_delay.max(0));
             self.duplicate_streak = 0;
             self.update_state(PlayerState::Playing);
@@ -604,8 +666,17 @@ impl<P: Presenter> RenderLoop<P> {
         let span = (next.pts_us - last_pts).max(1) as f64;
         let weight = ((media_at_target - last_pts) as f64 / span).clamp(0.0, 1.0);
         self.count_missed(target_ns, interval_ns);
+        let step_us = (interval_ns as f64 / 1_000.0 * rate).max(1.0);
+        let frames_left = ((next.pts_us - media_at_target) as f64 / step_us).ceil().clamp(1.0, 64.0) as u32;
+        let delay_us = target_delay.max(0);
         let started = Instant::now();
-        let presented = self.presenter.present_blend(&previous, &next, weight as f32, target_delay.max(0));
+        let presenter = &mut self.presenter;
+        let presented = match self.shared.video_frames.with_front(self.serial, |frame| {
+            presenter.present_blend_ahead(&previous, &next, weight as f32, delay_us, Ahead { frame, frames_left })
+        }) {
+            Some(presented) => presented,
+            None => self.presenter.present_blend(&previous, &next, weight as f32, delay_us),
+        };
         self.record_render_time(started);
         if presented {
             self.shared.counters.presented.fetch_add(1, Ordering::Relaxed);
@@ -613,6 +684,7 @@ impl<P: Presenter> RenderLoop<P> {
         self.last = Some(previous);
         self.pending = Some(next);
         self.last_blend_vsync = target_ns;
+        self.phase_anchor = (target_ns, media_at_target);
         self.blends_in_window += 1;
         self.interpolated_in_window += 1;
         self.update_state(PlayerState::Playing);
@@ -817,6 +889,7 @@ impl<P: Presenter> RenderLoop<P> {
                 self.motion = settings;
                 if changed_level || self.motion_level == 0 {
                     self.motion_level = 0;
+                    self.motion_shrink = 0;
                     self.motion_strained = 0;
                     self.motion_relaxed = 0;
                     self.motion_upgrade_after = 10;
@@ -1208,6 +1281,7 @@ pub fn run_renderer<P: Presenter>(shared: Arc<Shared>, presenter: P, commands: R
         blends_in_window: 0,
         motion: MotionSettings::default(),
         motion_level: 0,
+        motion_shrink: 0,
         motion_strained: 0,
         motion_relaxed: 0,
         motion_upgrade_after: 10,
@@ -1215,6 +1289,7 @@ pub fn run_renderer<P: Presenter>(shared: Arc<Shared>, presenter: P, commands: R
         duplicate_streak: 0,
         interpolated_in_window: 0,
         output_interval_ns: 0,
+        phase_anchor: (0, 0),
     }
     .run(commands);
 }

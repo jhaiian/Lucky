@@ -18,14 +18,17 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.Movie
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
@@ -38,14 +41,17 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.jhaiian.lucky.R
 import com.jhaiian.lucky.data.VideoItem
 import com.jhaiian.lucky.data.VideoThumbnails
+import com.jhaiian.lucky.data.WatchHistory
 import com.jhaiian.lucky.ui.components.LoadingShimmer
 import com.jhaiian.lucky.ui.home.formatDuration
 import com.jhaiian.lucky.ui.theme.LocalLuckyColors
@@ -65,6 +71,8 @@ fun VideoThumbnail(uri: String, corner: Dp, modifier: Modifier = Modifier, progr
     }
     val image = state.second
     val loading = !state.first
+    val history by WatchHistory.entries(context).collectAsState()
+    val watched = history[uri]?.finished == true
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(corner))
@@ -86,7 +94,19 @@ fun VideoThumbnail(uri: String, corner: Dp, modifier: Modifier = Modifier, progr
                 Icon(fallbackIcon, contentDescription = null, tint = colors.primary, modifier = Modifier.size(iconSize))
             }
         }
-        if (progress > 0f) {
+        if (watched) {
+            Box(
+                Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(6.dp)
+                    .size(22.dp)
+                    .clip(CircleShape)
+                    .background(colors.primary),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Rounded.Check, contentDescription = stringResource(R.string.library_watched), tint = colors.onPrimary, modifier = Modifier.size(15.dp))
+            }
+        } else if (progress > 0f) {
             ProgressStrip(progress, Modifier.align(Alignment.BottomCenter))
         }
     }
@@ -120,6 +140,7 @@ fun CarouselVideoCard(
     progress: Float,
     width: Dp,
     corner: Dp,
+    onLongClick: (() -> Unit)? = null,
     onClick: () -> Unit
 ) {
     val colors = LocalLuckyColors.current
@@ -127,7 +148,7 @@ fun CarouselVideoCard(
         Modifier
             .width(width)
             .clip(RoundedCornerShape(corner))
-            .combinedClickable(onClick = onClick)
+            .combinedClickable(onLongClick = onLongClick, onClick = onClick)
     ) {
         VideoThumbnail(
             uri = item?.uri ?: uri,

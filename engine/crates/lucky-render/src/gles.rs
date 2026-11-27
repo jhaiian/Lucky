@@ -6,7 +6,8 @@ use std::sync::OnceLock;
 use glow::HasContext;
 use lucky_ffmpeg::{Frame, Scaler, sys};
 use lucky_player::{
-    ActiveScaling, DisplayOptions, DownscalerMode, FitMode, FrameData, HardwareFrame, MotionConfig, Presenter, ScalerMode, VideoFrame, ViewTransform,
+    ActiveScaling, Ahead, DisplayOptions, DownscalerMode, FitMode, FrameData, HardwareFrame, MotionConfig, Presenter, ScalerMode, VideoFrame,
+    ViewTransform,
 };
 
 use crate::color::{
@@ -15,7 +16,7 @@ use crate::color::{
 };
 use crate::dovi::{DOVI_HEIGHT, DOVI_WIDTH, dovi_table};
 use crate::egl::*;
-use crate::memc::{DUPLICATE_LIMIT, Memc, MemcFrame, MemcParams};
+use crate::memc::{DUPLICATE_LIMIT, Memc, MemcFrame, MemcParams, scaled_size};
 use crate::shaders;
 use crate::window::{DATASPACE_BT2020_PQ, DATASPACE_UNKNOWN, NativeWindow};
 
@@ -296,7 +297,8 @@ struct Blend {
     translate: Option<glow::UniformLocation>,
     turns: Option<glow::UniformLocation>,
     crop: Option<glow::UniformLocation>,
-    slots: [Option<BlendSlot>; 2],
+    slots: [Option<BlendSlot>; 3],
+    shrunk: Option<BlendSlot>,
 }
 
 impl Blend {
@@ -317,7 +319,8 @@ impl Blend {
                 translate: uniform("u_translate"),
                 turns: uniform("u_turns"),
                 crop: uniform("u_crop"),
-                slots: [None, None],
+                slots: [None, None, None],
+                shrunk: None,
             })
         }
     }
@@ -331,26 +334,71 @@ impl Blend {
                 gl.delete_framebuffer(old.framebuffer);
                 gl.delete_texture(old.texture);
             }
-            let texture = gl.create_texture()?;
-            gl.bind_texture(glow::TEXTURE_2D, Some(texture));
-            gl.tex_storage_2d(glow::TEXTURE_2D, 1, glow::RGB10_A2, width, height);
-            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::NEAREST as i32);
-            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::NEAREST as i32);
-            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE as i32);
-            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_T, glow::CLAMP_TO_EDGE as i32);
-            let framebuffer = gl.create_framebuffer()?;
-            gl.bind_framebuffer(glow::FRAMEBUFFER, Some(framebuffer));
-            gl.framebuffer_texture_2d(glow::FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::TEXTURE_2D, Some(texture), 0);
-            let complete = gl.check_framebuffer_status(glow::FRAMEBUFFER) == glow::FRAMEBUFFER_COMPLETE;
-            gl.bind_framebuffer(glow::FRAMEBUFFER, None);
-            if !complete {
-                gl.delete_framebuffer(framebuffer);
-                gl.delete_texture(texture);
-                return Err("blend target is incomplete".into());
-            }
-            self.slots[index] = Some(BlendSlot { texture, framebuffer, size: (width, height), key: None, version: 0 });
+            self.slots[index] = Some(new_slot(gl, width, height, glow::NEAREST)?);
             Ok(())
         }
+    }
+
+    unsafe fn ensure_shrunk(&mut self, gl: &glow::Context, width: i32, height: i32) -> Result<(), String> {
+        unsafe {
+            if self.shrunk.as_ref().is_some_and(|slot| slot.size == (width, height)) {
+                return Ok(());
+            }
+            if let Some(old) = self.shrunk.take() {
+                gl.delete_framebuffer(old.framebuffer);
+                gl.delete_texture(old.texture);
+            }
+            self.shrunk = Some(new_slot(gl, width, height, glow::LINEAR)?);
+            Ok(())
+        }
+    }
+}
+
+unsafe fn upscale(state: &GlState, texture: glow::Texture, size: (i32, i32), levels: f32) {
+    let Some(blend) = state.blend.as_ref() else {
+        return;
+    };
+    unsafe {
+        let gl = &state.gl;
+        gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+        gl.viewport(0, 0, size.0, size.1);
+        gl.use_program(Some(blend.program));
+        gl.uniform_2_f32(blend.scale.as_ref(), 1.0, 1.0);
+        gl.uniform_2_f32(blend.translate.as_ref(), 0.0, 0.0);
+        gl.uniform_1_i32(blend.turns.as_ref(), 0);
+        gl.uniform_4_f32(blend.crop.as_ref(), 0.0, 1.0, 1.0, -1.0);
+        gl.uniform_1_f32(blend.weight.as_ref(), 0.0);
+        gl.uniform_1_f32(blend.dither.as_ref(), levels);
+        gl.active_texture(glow::TEXTURE0);
+        gl.bind_texture(glow::TEXTURE_2D, Some(texture));
+        gl.active_texture(glow::TEXTURE1);
+        gl.bind_texture(glow::TEXTURE_2D, Some(texture));
+        gl.bind_vertex_array(Some(state.vao));
+        gl.draw_arrays(glow::TRIANGLE_STRIP, 0, 4);
+        gl.active_texture(glow::TEXTURE0);
+    }
+}
+
+unsafe fn new_slot(gl: &glow::Context, width: i32, height: i32, filter: u32) -> Result<BlendSlot, String> {
+    unsafe {
+        let texture = gl.create_texture()?;
+        gl.bind_texture(glow::TEXTURE_2D, Some(texture));
+        gl.tex_storage_2d(glow::TEXTURE_2D, 1, glow::RGB10_A2, width, height);
+        gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, filter as i32);
+        gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, filter as i32);
+        gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE as i32);
+        gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_T, glow::CLAMP_TO_EDGE as i32);
+        let framebuffer = gl.create_framebuffer()?;
+        gl.bind_framebuffer(glow::FRAMEBUFFER, Some(framebuffer));
+        gl.framebuffer_texture_2d(glow::FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::TEXTURE_2D, Some(texture), 0);
+        let complete = gl.check_framebuffer_status(glow::FRAMEBUFFER) == glow::FRAMEBUFFER_COMPLETE;
+        gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+        if !complete {
+            gl.delete_framebuffer(framebuffer);
+            gl.delete_texture(texture);
+            return Err("blend target is incomplete".into());
+        }
+        Ok(BlendSlot { texture, framebuffer, size: (width, height), key: None, version: 0 })
     }
 }
 
@@ -1426,7 +1474,7 @@ impl GlesPresenter {
         self.surface != EGL_NO_SURFACE && !self.failed && self.state.as_ref().is_some_and(|state| !state.blend_failed)
     }
 
-    fn cache_frame(&mut self, video: &VideoFrame, keep: Option<usize>, width: i32, height: i32) -> Option<usize> {
+    fn cache_frame(&mut self, video: &VideoFrame, keep: &[usize], width: i32, height: i32) -> Option<usize> {
         let key = (video.serial, video.pts_us);
         {
             let state = self.state.as_mut()?;
@@ -1440,16 +1488,16 @@ impl GlesPresenter {
                 }
             }
             let blend = state.blend.as_mut()?;
-            if let Some(index) = (0..2).find(|i| {
+            if let Some(index) = (0..3).find(|i| {
                 blend.slots[*i].as_ref().is_some_and(|slot| slot.key == Some(key) && slot.size == (width, height))
             }) {
                 return Some(index);
             }
         }
-        let index = if keep == Some(0) { 1 } else if keep == Some(1) { 0 } else {
-            let state = self.state.as_ref()?;
-            let blend = state.blend.as_ref()?;
-            if blend.slots[0].is_none() { 0 } else if blend.slots[1].is_none() { 1 } else { 0 }
+        let index = {
+            let blend = self.state.as_ref()?.blend.as_ref()?;
+            let age = |index: usize| blend.slots[index].as_ref().filter(|slot| slot.key.is_some()).map_or(0, |slot| slot.version + 1);
+            (0..3).filter(|index| !keep.contains(index)).min_by_key(|index| age(*index))?
         };
         let framebuffer = {
             let state = self.state.as_mut()?;
@@ -1486,7 +1534,7 @@ impl GlesPresenter {
     fn cached_slot(&self, video: &VideoFrame, width: i32, height: i32) -> Option<usize> {
         let key = (video.serial, video.pts_us);
         let blend = self.state.as_ref()?.blend.as_ref()?;
-        (0..2).find(|i| blend.slots[*i].as_ref().is_some_and(|slot| slot.key == Some(key) && slot.size == (width, height)))
+        (0..3).find(|i| blend.slots[*i].as_ref().is_some_and(|slot| slot.key == Some(key) && slot.size == (width, height)))
     }
 
     pub fn set_motion_config(&mut self, config: MotionConfig) {
@@ -1545,32 +1593,102 @@ impl GlesPresenter {
         }
     }
 
-    fn present_motion(&mut self, from_slot: usize, to_slot: usize, rect: [f32; 4], weight: f32, size: (i32, i32), levels: f32) -> bool {
+    fn present_motion(&mut self, from_slot: usize, to_slot: usize, rect: [f32; 4], weight: f32, size: (i32, i32), levels: f32) -> Option<u32> {
         if !self.ensure_memc() {
-            return false;
+            return None;
         }
         let (Some(a), Some(b)) = (self.slot_frame(from_slot), self.slot_frame(to_slot)) else {
-            return false;
+            return None;
         };
-        let params = MemcParams { level: self.motion.level, protection: self.motion.protection, scene: self.motion.scene };
+        let params = MemcParams { level: self.motion.level };
+        let out = scaled_size(size, self.motion.scale());
         let result = {
-            let Some(state) = self.state.as_mut() else {
-                return false;
+            let state = self.state.as_mut()?;
+            let shrunk = if out != size {
+                let blend = state.blend.as_mut()?;
+                if let Err(error) = unsafe { blend.ensure_shrunk(&state.gl, out.0, out.1) } {
+                    log::warn!("reduced motion target failed: {error}");
+                    None
+                } else {
+                    blend.shrunk.as_ref().map(|slot| (slot.framebuffer, slot.texture))
+                }
+            } else {
+                None
             };
-            let Some(memc) = state.memc.as_mut() else {
-                return false;
-            };
-            unsafe { memc.render(&state.gl, a, b, size, rect, weight, params, levels, None) }
+            let memc = state.memc.as_mut()?;
+            match shrunk {
+                Some((framebuffer, texture)) => unsafe {
+                    let rendered = memc.render(&state.gl, a, b, size, rect, weight, params, 0.0, Some(framebuffer), out);
+                    if rendered.is_ok() {
+                        upscale(state, texture, size, levels);
+                    }
+                    rendered
+                },
+                None => unsafe { memc.render(&state.gl, a, b, size, rect, weight, params, levels, None, size) },
+            }
         };
         self.restore_bindings();
         match result {
-            Ok(()) => true,
+            Ok(stages) => Some(stages),
             Err(error) => {
                 log::warn!("motion interpolation failed: {error}");
                 if let Some(state) = self.state.as_mut() {
                     state.memc_failed = true;
                 }
-                false
+                None
+            }
+        }
+    }
+
+    fn prepare_ahead(&mut self, from_slot: usize, to_slot: usize, ahead: Ahead<'_>, spent: u32, size: (i32, i32)) {
+        if spent > 0 || self.motion.level == 0 || self.state.as_ref().is_none_or(|state| state.memc_failed) {
+            return;
+        }
+        let params = MemcParams { level: self.motion.level };
+        let cached = self.cached_slot(ahead.frame, size.0, size.1);
+        if cached == Some(to_slot) || cached == Some(from_slot) {
+            return;
+        }
+        let memc = self.state.as_ref().and_then(|state| state.memc.as_ref());
+        let pending = match (cached.and_then(|slot| self.slot_frame(slot)), self.slot_frame(to_slot), memc) {
+            (Some(next), Some(to), Some(memc)) => memc.remaining(to.version, next.version),
+            _ => 2,
+        };
+        let remaining = pending + cached.is_none() as u32;
+        if remaining == 0 {
+            return;
+        }
+        let mut budget = remaining.div_ceil(ahead.frames_left.max(1));
+        let slot = match cached {
+            Some(slot) => slot,
+            None => {
+                let Some(slot) = self.cache_frame(ahead.frame, &[to_slot, from_slot], size.0, size.1) else {
+                    return;
+                };
+                budget -= 1;
+                slot
+            }
+        };
+        if budget == 0 || !self.ensure_memc() {
+            return;
+        }
+        let (Some(a), Some(b), Some(c)) = (self.slot_frame(from_slot), self.slot_frame(to_slot), self.slot_frame(slot)) else {
+            return;
+        };
+        let result = {
+            let Some(state) = self.state.as_mut() else {
+                return;
+            };
+            let Some(memc) = state.memc.as_mut() else {
+                return;
+            };
+            unsafe { memc.advance(&state.gl, b, c, (a.version, b.version), size, params, budget) }
+        };
+        self.restore_bindings();
+        if let Err(error) = result {
+            log::warn!("motion interpolation failed: {error}");
+            if let Some(state) = self.state.as_mut() {
+                state.memc_failed = true;
             }
         }
     }
@@ -1581,8 +1699,8 @@ impl GlesPresenter {
         }
         let (width, height) = self.surface_size();
         let holding = self.cached_slot(from, width, height);
-        let to_slot = self.cache_frame(to, holding, width, height)?;
-        let from_slot = self.cache_frame(from, Some(to_slot), width, height)?;
+        let to_slot = self.cache_frame(to, holding.as_slice(), width, height)?;
+        let from_slot = self.cache_frame(from, &[to_slot], width, height)?;
         let (a, b) = (self.slot_frame(from_slot)?, self.slot_frame(to_slot)?);
         let result = {
             let state = self.state.as_mut()?;
@@ -1598,7 +1716,7 @@ impl GlesPresenter {
         result.map(|peak| peak < DUPLICATE_LIMIT)
     }
 
-    pub fn present_blend(&mut self, from: &VideoFrame, to: &VideoFrame, weight: f32, delay_us: i64) -> bool {
+    pub fn present_blend(&mut self, from: &VideoFrame, to: &VideoFrame, weight: f32, delay_us: i64, ahead: Option<Ahead<'_>>) -> bool {
         if self.surface == EGL_NO_SURFACE || self.failed {
             return false;
         }
@@ -1609,19 +1727,22 @@ impl GlesPresenter {
         self.apply_light_metadata(to);
         let (width, height) = self.surface_size();
         let holding = self.cached_slot(from, width, height);
-        let Some(to_slot) = self.cache_frame(to, holding, width, height) else {
+        let Some(to_slot) = self.cache_frame(to, holding.as_slice(), width, height) else {
             return self.present_paced(if weight >= 0.5 { to } else { from }, delay_us);
         };
-        let from_slot = if weight < 0.999 { self.cache_frame(from, Some(to_slot), width, height).unwrap_or(to_slot) } else { to_slot };
+        let from_slot = if weight < 0.999 { self.cache_frame(from, &[to_slot], width, height).unwrap_or(to_slot) } else { to_slot };
         if self.motion.level > 0 && from_slot != to_slot && weight > 0.002 && weight < 0.998 {
             let rect = self.video_rect(to, width, height);
             let levels = self.dither_levels();
-            if self.present_motion(from_slot, to_slot, rect, weight, (width, height), levels) {
+            if let Some(spent) = self.present_motion(from_slot, to_slot, rect, weight, (width, height), levels) {
                 if self.presentation_time.is_some() && delay_us > 0 {
                     self.target_ns = Some(monotonic_ns() + delay_us * 1_000);
                 }
                 let swapped = self.swap();
                 self.target_ns = None;
+                if let Some(ahead) = ahead {
+                    self.prepare_ahead(from_slot, to_slot, ahead, spent, (width, height));
+                }
                 return swapped;
             }
         }
@@ -1664,6 +1785,9 @@ impl GlesPresenter {
         }
         let swapped = self.swap();
         self.target_ns = None;
+        if let Some(ahead) = ahead {
+            self.prepare_ahead(from_slot, to_slot, ahead, 0, (width, height));
+        }
         swapped
     }
 

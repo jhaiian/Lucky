@@ -11,6 +11,7 @@ import android.graphics.Canvas
 import android.graphics.drawable.ColorDrawable
 import android.os.Build
 import android.os.Bundle
+import android.view.KeyEvent
 import android.view.animation.AccelerateDecelerateInterpolator
 import android.widget.FrameLayout
 import androidx.activity.result.contract.ActivityResultContracts
@@ -259,6 +260,30 @@ abstract class LuckyActivity : AppCompatActivity() {
         }
         trackDialogShown()
         dialog.setOnDismissListener { trackDialogDismissed() }
+    }
+
+    var volumeKeyHandler: ((Boolean) -> Boolean)? = null
+    private var consumedVolumeKey = -1
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        val code = event.keyCode
+        if (code == KeyEvent.KEYCODE_VOLUME_UP || code == KeyEvent.KEYCODE_VOLUME_DOWN) {
+            val handler = volumeKeyHandler
+            when (event.action) {
+                KeyEvent.ACTION_DOWN -> {
+                    if (handler != null && handler(code == KeyEvent.KEYCODE_VOLUME_UP)) {
+                        consumedVolumeKey = code
+                        return true
+                    }
+                    if (event.repeatCount == 0) consumedVolumeKey = -1
+                }
+                KeyEvent.ACTION_UP -> if (consumedVolumeKey == code) {
+                    consumedVolumeKey = -1
+                    return true
+                }
+            }
+        }
+        return super.dispatchKeyEvent(event)
     }
 
     private var playerImmersive = false

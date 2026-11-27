@@ -96,6 +96,7 @@ import com.jhaiian.lucky.data.QueueItem
 import com.jhaiian.lucky.data.ScanPhase
 import com.jhaiian.lucky.data.VideoItem
 import com.jhaiian.lucky.data.WatchEntry
+import com.jhaiian.lucky.data.UpNext
 import com.jhaiian.lucky.data.WatchHistory
 import com.jhaiian.lucky.ui.components.AlphabetIndex
 import com.jhaiian.lucky.ui.components.EmptyState
@@ -306,14 +307,16 @@ private fun LibraryHome(
     val top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val bottom = LocalBottomContentPadding.current
     val byUri = remember(videos) { videos.associateBy { it.uri } }
-    val continueWatching = remember(history, videos) {
-        history.values.filter { it.resumable }.sortedByDescending { it.updatedAt }.take(20)
-    }
+    val continueList = remember(history, videos) { UpNext.build(history, videos) }
+    val continueWatching = continueList.entries
     val recentlyAdded = remember(videos) { videos.sortedByDescending { it.modified }.take(20) }
     val folderCount = remember(videos) { videos.map { it.folderId }.distinct().size }
     val scanState = LibraryStore.scanState
     val autoSource = LibraryStore.source == LibrarySource.AUTO
     val accessRequest = rememberVideoAccessRequest()
+    val haptics = rememberHaptics()
+    var actionTarget by remember { mutableStateOf<VideoItem?>(null) }
+    var actionQueue by remember { mutableStateOf<List<QueueItem>>(emptyList()) }
 
     RefreshContainer {
         LazyColumn(
@@ -430,12 +433,25 @@ private fun LibraryHome(
                                 item = video,
                                 uri = entry.uri,
                                 title = video?.title ?: entry.title.orEmpty(),
-                                subtitle = stringResource(R.string.library_time_left, formatDuration((entry.durationMs - entry.positionMs).coerceAtLeast(0L))),
+                                subtitle = if (entry.uri in continueList.upNext) {
+                                    stringResource(R.string.library_next_episode)
+                                } else {
+                                    stringResource(R.string.library_time_left, formatDuration((entry.durationMs - entry.positionMs).coerceAtLeast(0L)))
+                                },
                                 progress = entry.progress,
                                 width = 232.dp,
                                 corner = (16 * cornerScale).dp,
+                                onLongClick = {
+                                    haptics.longPress()
+                                    actionQueue = continueWatching.map { item -> QueueItem(item.uri, byUri[item.uri]?.title ?: item.title) }
+                                    actionTarget = video ?: entry.asVideo()
+                                },
                                 onClick = {
-                                    PlayQueue.set(continueWatching.map { item -> QueueItem(item.uri, byUri[item.uri]?.title ?: item.title) })
+                                    val episodes = continueList.showOf(entry.uri, video?.name ?: entry.title)
+                                    PlayQueue.set(
+                                        episodes?.map { item -> QueueItem(item.uri, item.title) }
+                                            ?: continueWatching.map { item -> QueueItem(item.uri, byUri[item.uri]?.title ?: item.title) }
+                                    )
                                     onPlay(entry.uri, video?.title ?: entry.title)
                                 }
                             )
@@ -458,6 +474,11 @@ private fun LibraryHome(
                                 progress = history[video.uri]?.progress ?: 0f,
                                 width = 200.dp,
                                 corner = (16 * cornerScale).dp,
+                                onLongClick = {
+                                    haptics.longPress()
+                                    actionQueue = recentlyAdded.map { item -> QueueItem(item.uri, item.title) }
+                                    actionTarget = video
+                                },
                                 onClick = {
                                     PlayQueue.set(recentlyAdded.map { item -> QueueItem(item.uri, item.title) })
                                     onPlay(video.uri, video.title)
@@ -492,6 +513,14 @@ private fun LibraryHome(
                 VerticalScrollbar(listState, colors.primary, topPadding = top, bottomPadding = bottom)
             }
         }
+        VideoActionsHost(
+            target = actionTarget,
+            onDismiss = { actionTarget = null },
+            onPlay = { video ->
+                PlayQueue.set(actionQueue)
+                onPlay(video.uri, video.title)
+            }
+        )
     }
 }
 
@@ -714,6 +743,7 @@ private fun CategoryScreen(
     var showMenu by remember { mutableStateOf(false) }
     var showSort by remember { mutableStateOf(false) }
     var showViewMode by remember { mutableStateOf(false) }
+    var actionTarget by remember { mutableStateOf<VideoItem?>(null) }
     val top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val bottom = LocalBottomContentPadding.current
     val countText = when {
@@ -727,6 +757,14 @@ private fun CategoryScreen(
             items.getOrNull(index)?.let {
                 PlayQueue.set(items.map { item -> QueueItem(item.uri, item.title) })
                 onPlay(it.uri, it.title)
+            }
+        }
+    }
+    val onTileLongClick: (Int) -> Unit = { index ->
+        if (!showingFolders) {
+            items.getOrNull(index)?.let {
+                haptics.longPress()
+                actionTarget = it
             }
         }
     }
@@ -772,7 +810,7 @@ private fun CategoryScreen(
         val morphing = morph.session != null
 
         SideEffect {
-            morph.pinchEnabled = !showMenu && !showSort && !showViewMode && !showSwitcher && count > 0
+            morph.pinchEnabled = !showMenu && !showSort && !showViewMode && !showSwitcher && actionTarget == null && count > 0
             morph.currentMode = { viewMode }
             morph.onStep = { haptics.tick() }
             morph.captureSession = capture@{
@@ -831,7 +869,7 @@ private fun CategoryScreen(
                             modifier = Modifier
                                 .fixedHeight(geometry.rowHeight)
                                 .clip(tileShape)
-                                .combinedClickable { onTileClick(index) }
+                                .combinedClickable(onLongClick = { onTileLongClick(index) }) { onTileClick(index) }
                         )
                     }
                     if (count == 0) item(key = "empty", span = { GridItemSpan(maxLineSpan) }) { EmptyCategory() }
@@ -856,7 +894,7 @@ private fun CategoryScreen(
                             fraction = StaticFraction,
                             modifier = Modifier
                                 .fixedHeight(geometry.rowHeight)
-                                .combinedClickable { onTileClick(index) }
+                                .combinedClickable(onLongClick = { onTileLongClick(index) }) { onTileClick(index) }
                         )
                     }
                     if (count == 0) item(key = "empty") { EmptyCategory() }
@@ -931,6 +969,14 @@ private fun CategoryScreen(
             if (!morph.morphTo(mode)) prefs.edit().putString(viewKey, mode.key).apply()
         },
         onDismiss = { showViewMode = false }
+    )
+    VideoActionsHost(
+        target = actionTarget,
+        onDismiss = { actionTarget = null },
+        onPlay = { video ->
+            PlayQueue.set(items.map { item -> QueueItem(item.uri, item.title) })
+            onPlay(video.uri, video.title)
+        }
     )
 }
 

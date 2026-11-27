@@ -23,7 +23,21 @@ import com.jhaiian.lucky.ui.components.SubPage
 import com.jhaiian.lucky.ui.components.section
 import com.jhaiian.lucky.update.UpdateChecker
 
-enum class SettingsPage { LOOK_AND_FEEL, PLAYBACK, AUDIO, PLAYER, LIBRARY, WATCH_HISTORY, UPDATES, CRASH_LOGS, ABOUT }
+enum class SettingsPage {
+    LOOK_AND_FEEL, PLAYBACK, AUDIO, PLAYER, LIBRARY, WATCH_HISTORY, UPDATES, CRASH_LOGS, ABOUT, PLAYER_LOOK;
+
+    val parent: SettingsPage?
+        get() = when (this) {
+            PLAYER_LOOK -> PLAYER
+            else -> null
+        }
+}
+
+fun settingsDepth(page: SettingsPage?): Int = when {
+    page == null -> 0
+    page.parent == null -> 1
+    else -> 2
+}
 
 @Composable
 fun SettingsScreen(onOpenPage: (SettingsPage) -> Unit, modifier: Modifier = Modifier) {
@@ -107,12 +121,19 @@ fun SettingsScreen(onOpenPage: (SettingsPage) -> Unit, modifier: Modifier = Modi
 }
 
 @Composable
-fun SettingsPageScreen(page: SettingsPage, onBack: () -> Unit, onManageFolders: () -> Unit, modifier: Modifier = Modifier) {
+fun SettingsPageScreen(
+    page: SettingsPage,
+    onBack: () -> Unit,
+    onOpenPage: (SettingsPage) -> Unit,
+    onManageFolders: () -> Unit,
+    modifier: Modifier = Modifier
+) {
     when (page) {
         SettingsPage.LOOK_AND_FEEL -> LookAndFeelSettings(onBack = onBack, modifier = modifier)
         SettingsPage.PLAYBACK -> PlaybackSettings(onBack = onBack, modifier = modifier)
         SettingsPage.AUDIO -> AudioSettings(onBack = onBack, modifier = modifier)
-        SettingsPage.PLAYER -> PlayerSettings(onBack = onBack, modifier = modifier)
+        SettingsPage.PLAYER -> PlayerSettings(onBack = onBack, onOpenLook = { onOpenPage(SettingsPage.PLAYER_LOOK) }, modifier = modifier)
+        SettingsPage.PLAYER_LOOK -> PlayerLookSettings(onBack = onBack, modifier = modifier)
         SettingsPage.LIBRARY -> LibrarySettings(onBack = onBack, onManageFolders = onManageFolders, modifier = modifier)
         SettingsPage.WATCH_HISTORY -> WatchHistorySettings(onBack = onBack, modifier = modifier)
         SettingsPage.UPDATES -> UpdateSettings(onBack = onBack, modifier = modifier)

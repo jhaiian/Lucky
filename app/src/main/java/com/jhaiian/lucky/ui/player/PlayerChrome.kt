@@ -2,10 +2,12 @@ package com.jhaiian.lucky.ui.player
 
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -17,12 +19,15 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
@@ -71,6 +76,13 @@ internal fun PlayerSeekBar(
     val palette = LocalPlayerPalette.current
     val change by rememberUpdatedState(onValueChange)
     val finished by rememberUpdatedState(onValueChangeFinished)
+    var pressing by remember { mutableStateOf(false) }
+    var dragging by remember { mutableStateOf(false) }
+    val grow by animateFloatAsState(
+        if (pressing || dragging) 1f else 0f,
+        spring(dampingRatio = 0.7f, stiffness = Spring.StiffnessMediumLow),
+        label = "grow"
+    )
     val track = Color.White.copy(alpha = if (enabled) 0.3f else 0.15f)
     val active = if (enabled) palette.accent else Color.White.copy(alpha = 0.5f)
     val wave by animateFloatAsState(if (playing && style == SeekStyle.SQUIGGLE) 1f else 0f, tween(400), label = "wave")
@@ -92,17 +104,33 @@ internal fun PlayerSeekBar(
             .height(36.dp)
             .pointerInput(enabled) {
                 if (!enabled) return@pointerInput
-                detectTapGestures {
-                    change((it.x / size.width).coerceIn(0f, 1f))
-                    finished()
-                }
+                detectTapGestures(
+                    onPress = {
+                        pressing = true
+                        tryAwaitRelease()
+                        pressing = false
+                    },
+                    onTap = {
+                        change((it.x / size.width).coerceIn(0f, 1f))
+                        finished()
+                    }
+                )
             }
             .pointerInput(enabled) {
                 if (!enabled) return@pointerInput
                 detectHorizontalDragGestures(
-                    onDragStart = { change((it.x / size.width).coerceIn(0f, 1f)) },
-                    onDragEnd = { finished() },
-                    onDragCancel = { finished() },
+                    onDragStart = {
+                        dragging = true
+                        change((it.x / size.width).coerceIn(0f, 1f))
+                    },
+                    onDragEnd = {
+                        dragging = false
+                        finished()
+                    },
+                    onDragCancel = {
+                        dragging = false
+                        finished()
+                    },
                     onHorizontalDrag = { pointer, _ ->
                         pointer.consume()
                         change((pointer.position.x / size.width).coerceIn(0f, 1f))
@@ -114,23 +142,24 @@ internal fun PlayerSeekBar(
             val width = size.width
             val center = size.height / 2f
             val progress = value.coerceIn(0f, 1f) * width
+            val g = grow
             when (style) {
                 SeekStyle.SLIDER -> {
-                    val thickness = 4.dp.toPx()
+                    val thickness = lerp(4.dp.toPx(), 6.dp.toPx(), g)
                     drawLine(track, Offset(0f, center), Offset(width, center), thickness, StrokeCap.Round)
                     drawLine(active, Offset(0f, center), Offset(progress, center), thickness, StrokeCap.Round)
-                    drawMarkers(markers, center, 4.dp.toPx())
-                    drawCircle(active, 8.dp.toPx(), Offset(progress, center))
+                    drawMarkers(markers, center, thickness)
+                    drawThumb(active, Offset(progress, center), lerp(8.dp.toPx(), 11.dp.toPx(), g), g)
                 }
                 SeekStyle.THIN -> {
-                    val thickness = 3.dp.toPx()
+                    val thickness = lerp(3.dp.toPx(), 5.dp.toPx(), g)
                     drawLine(track, Offset(0f, center), Offset(width, center), thickness, StrokeCap.Round)
                     drawLine(active, Offset(0f, center), Offset(progress, center), thickness, StrokeCap.Round)
-                    drawMarkers(markers, center, 3.dp.toPx())
-                    drawCircle(active, 6.dp.toPx(), Offset(progress, center))
+                    drawMarkers(markers, center, thickness)
+                    drawThumb(active, Offset(progress, center), lerp(6.dp.toPx(), 9.dp.toPx(), g), g)
                 }
                 SeekStyle.BAR -> {
-                    val height = 14.dp.toPx()
+                    val height = lerp(14.dp.toPx(), 18.dp.toPx(), g)
                     val radius = CornerRadius(height / 2f)
                     drawRoundRect(track, Offset(0f, center - height / 2f), Size(width, height), radius)
                     if (progress > 0f) {
@@ -153,27 +182,78 @@ internal fun PlayerSeekBar(
                     }
                     drawPath(path, active, style = Stroke(width = stroke, cap = StrokeCap.Round))
                     drawMarkers(markers, center, stroke)
+                    val thumbHeight = lerp(20.dp.toPx(), 26.dp.toPx(), g)
+                    val thumbWidth = lerp(4.dp.toPx(), 6.dp.toPx(), g)
                     drawRoundRect(
                         active,
-                        Offset(progress - 2.dp.toPx(), center - 10.dp.toPx()),
-                        Size(4.dp.toPx(), 20.dp.toPx()),
-                        CornerRadius(2.dp.toPx())
+                        Offset(progress - thumbWidth / 2f, center - thumbHeight / 2f),
+                        Size(thumbWidth, thumbHeight),
+                        CornerRadius(thumbWidth / 2f)
                     )
                 }
                 SeekStyle.DOTS -> {
                     val radius = 2.dp.toPx()
-                    val thumb = 7.dp.toPx()
+                    val thumb = lerp(7.dp.toPx(), 9.dp.toPx(), g)
                     var x = radius
                     while (x <= width - radius) {
                         drawCircle(if (x <= progress) active else track, radius, Offset(x, center))
                         x += 10.dp.toPx()
                     }
-                    drawCircle(active, thumb, Offset(progress.coerceIn(thumb, (width - thumb).coerceAtLeast(thumb)), center))
+                    drawThumb(active, Offset(progress.coerceIn(thumb, (width - thumb).coerceAtLeast(thumb)), center), thumb, g)
+                }
+                SeekStyle.CAPSULE -> {
+                    val height = lerp(8.dp.toPx(), 16.dp.toPx(), g)
+                    val radius = CornerRadius(height / 2f)
+                    drawRoundRect(track, Offset(0f, center - height / 2f), Size(width, height), radius)
+                    if (progress > 0f) {
+                        drawRoundRect(active, Offset(0f, center - height / 2f), Size(progress.coerceAtLeast(height), height), radius)
+                    }
+                    drawMarkers(markers, center, height)
+                    if (g > 0f) {
+                        val cap = height * 0.32f
+                        drawCircle(Color.White.copy(alpha = g.coerceIn(0f, 1f)), cap, Offset((progress - height / 2f).coerceAtLeast(height / 2f), center))
+                    }
+                }
+                SeekStyle.GLOW -> {
+                    val thickness = lerp(4.dp.toPx(), 6.dp.toPx(), g)
+                    drawLine(track, Offset(0f, center), Offset(width, center), thickness, StrokeCap.Round)
+                    if (progress > 0f) {
+                        drawLine(
+                            Brush.horizontalGradient(listOf(active.copy(alpha = 0.25f), active), startX = 0f, endX = progress),
+                            Offset(0f, center),
+                            Offset(progress, center),
+                            thickness,
+                            StrokeCap.Round
+                        )
+                    }
+                    drawMarkers(markers, center, thickness)
+                    val thumb = lerp(7.dp.toPx(), 10.dp.toPx(), g)
+                    val halo = thumb * lerp(2.6f, 3.2f, g)
+                    drawCircle(
+                        Brush.radialGradient(
+                            0f to active.copy(alpha = 0.6f),
+                            1f to Color.Transparent,
+                            center = Offset(progress, center),
+                            radius = halo
+                        ),
+                        radius = halo,
+                        center = Offset(progress, center)
+                    )
+                    drawCircle(active, thumb, Offset(progress, center))
+                    drawCircle(Color.White, thumb * 0.45f, Offset(progress, center))
                 }
             }
             drawLoopRange(loopStart, loopEnd, center, palette.active)
         }
     }
+}
+
+private fun lerp(start: Float, stop: Float, fraction: Float): Float = start + (stop - start) * fraction
+
+private fun DrawScope.drawThumb(color: Color, position: Offset, radius: Float, grow: Float) {
+    if (grow > 0f) drawCircle(color.copy(alpha = (0.24f * grow).coerceIn(0f, 1f)), radius * 2f, position)
+    drawCircle(Color.Black.copy(alpha = 0.22f), radius + 1.dp.toPx(), position + Offset(0f, 1.dp.toPx()))
+    drawCircle(color, radius, position)
 }
 
 private fun DrawScope.drawLoopRange(start: Float?, end: Float?, center: Float, color: Color) {

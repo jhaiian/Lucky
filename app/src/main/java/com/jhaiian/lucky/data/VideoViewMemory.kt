@@ -55,6 +55,17 @@ object VideoViewMemory {
         if (removed) persist(context)
     }
 
+    fun rename(context: Context, from: String, to: String) {
+        if (from == to) return
+        ensureLoaded(context)
+        val moved = synchronized(lock) {
+            val entry = entries.remove(from) ?: return@synchronized false
+            entries[to] = entry
+            true
+        }
+        if (moved) persist(context)
+    }
+
     fun clear(context: Context) {
         synchronized(lock) {
             entries.clear()

@@ -23,11 +23,13 @@ Lucky es un reproductor de video de código abierto para los videos que ya tiene
 <b>Reproductor</b>
 • Desliza para el brillo, el volumen y avanzar, toca dos veces para saltar, pellizca para hacer zoom y mantén presionado para acelerar
 • Imagen en imagen, capítulos, repetición A–B, temporizador y avance cuadro por cuadro
+• Reproducción en segundo plano con minirreproductor, modo Solo audio, volumen amplificado hasta 300 % y botones para saltar la intro y los créditos
 • Quita las barras negras, recorta, haz zoom, refleja o gira el video, y toma capturas
 
 <b>Biblioteca y apariencia</b>
 • Encuentra tus videos por sí solo o busca solo en las carpetas que elijas
 • Seguir viendo, agregados recientemente, carpetas, historial y búsqueda
+• Abre videos desde otras apps y mantén presionado cualquier video para compartirlo, renombrarlo, borrarlo o ver sus detalles
 • Temas claro y oscuro, colores de acento y Material You
 • Diseño adaptable para teléfonos, tablets, plegables y pantallas anchas
 

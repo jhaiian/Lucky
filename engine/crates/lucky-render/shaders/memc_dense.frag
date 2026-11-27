@@ -13,20 +13,40 @@ layout(push_constant) uniform Dense {
 
 layout(location = 0) out ivec4 o_flow;
 
-float tap(vec2 p, vec2 q) {
-    return abs(textureLod(u_x, p * pc.inv, 0.0).r - textureLod(u_y, q * pc.inv, 0.0).r);
+float g_x0;
+float g_x1;
+float g_x2;
+float g_x3;
+float g_x4;
+
+float sx(vec2 p) {
+    return textureLod(u_x, p * pc.inv, 0.0).r;
+}
+
+float sy(vec2 q) {
+    return textureLod(u_y, q * pc.inv, 0.0).r;
+}
+
+void load_anchor(vec2 p) {
+    g_x0 = sx(p);
+    g_x1 = sx(p + vec2(1.0, 0.0));
+    g_x2 = sx(p - vec2(1.0, 0.0));
+    g_x3 = sx(p + vec2(0.0, 1.0));
+    g_x4 = sx(p - vec2(0.0, 1.0));
 }
 
 float cost(vec2 p, vec2 v) {
     vec2 q = p + v;
-    float s = tap(p, q);
-    s += tap(p + vec2(1.0, 0.0), q + vec2(1.0, 0.0));
-    s += tap(p - vec2(1.0, 0.0), q - vec2(1.0, 0.0));
-    s += tap(p + vec2(0.0, 1.0), q + vec2(0.0, 1.0));
-    s += tap(p - vec2(0.0, 1.0), q - vec2(0.0, 1.0));
+    float d0 = g_x0 - sy(q);
+    float d1 = g_x1 - sy(q + vec2(1.0, 0.0));
+    float d2 = g_x2 - sy(q - vec2(1.0, 0.0));
+    float d3 = g_x3 - sy(q + vec2(0.0, 1.0));
+    float d4 = g_x4 - sy(q - vec2(0.0, 1.0));
+    float a = abs(d0) + abs(d1) + abs(d2) + abs(d3) + abs(d4);
+    float s = d0 + d1 + d2 + d3 + d4;
     vec2 u = q * pc.inv;
     float outside = 1.0 - step(0.0, min(u.x, u.y)) * step(max(u.x, u.y), 1.0);
-    return s * 0.2 + outside * 0.03;
+    return (a - 0.75 * abs(s)) * 0.24 + outside * 0.03;
 }
 
 vec2 grid(ivec2 p) {
@@ -35,6 +55,7 @@ vec2 grid(ivec2 p) {
 
 void main() {
     vec2 p = gl_FragCoord.xy;
+    load_anchor(p);
     vec2 g = p / pc.grid_step - 0.5;
     vec2 fl = floor(g);
     vec2 f = g - fl;
@@ -45,27 +66,27 @@ void main() {
     vec2 v11 = grid(i0 + ivec2(1, 1));
     vec2 best = mix(mix(v00, v10, f.x), mix(v01, v11, f.x), f.y);
     float e = cost(p, best);
-    float c = cost(p, v00) + 0.004;
+    float c = cost(p, v00) + 0.015;
     if (c < e) {
         e = c;
         best = v00;
     }
-    c = cost(p, vec2(0.0)) + 0.003;
+    c = cost(p, vec2(0.0)) + 0.012;
     if (c < e) {
         e = c;
         best = vec2(0.0);
     }
-    c = cost(p, v10) + 0.004;
+    c = cost(p, v10) + 0.015;
     if (c < e) {
         e = c;
         best = v10;
     }
-    c = cost(p, v01) + 0.004;
+    c = cost(p, v01) + 0.015;
     if (c < e) {
         e = c;
         best = v01;
     }
-    c = cost(p, v11) + 0.004;
+    c = cost(p, v11) + 0.015;
     if (c < e) {
         e = c;
         best = v11;

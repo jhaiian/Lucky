@@ -113,7 +113,25 @@ object WatchHistory {
         persist(context)
     }
 
+    fun markWatched(context: Context, uri: String, title: String?, durationMs: Long) {
+        val previous = get(context, uri)
+        val duration = durationMs.takeIf { it > 0L } ?: previous?.durationMs ?: 0L
+        if (duration <= 0L) return
+        record(context, uri, title ?: previous?.title, duration, duration)
+    }
+
+    fun rename(context: Context, from: String, to: String, title: String?) {
+        ensureLoaded(context)
+        val changed = synchronized(lock) {
+            val entry = state.value[from] ?: return@synchronized false
+            state.value = (state.value - from) + (to to entry.copy(uri = to, title = title ?: entry.title))
+            true
+        }
+        if (changed) persist(context)
+    }
+
     fun clear(context: Context) {
+        ShowMemory.clear(context)
         synchronized(lock) {
             state.value = emptyMap()
             loaded = true
@@ -123,12 +141,12 @@ object WatchHistory {
 
     private fun file(context: Context) = File(context.applicationContext.filesDir, FILE_NAME)
 
-    private fun trackJson(track: TrackChoice) = JSONObject()
+    internal fun trackJson(track: TrackChoice) = JSONObject()
         .put("index", track.index)
         .put("language", track.language ?: "")
         .put("codec", track.codec ?: "")
 
-    private fun trackFrom(json: JSONObject): TrackChoice? =
+    internal fun trackFrom(json: JSONObject): TrackChoice? =
         if (json.has("index")) {
             TrackChoice(json.optInt("index", -1), json.optString("language").takeIf { it.isNotEmpty() }, json.optString("codec").takeIf { it.isNotEmpty() })
         } else {
